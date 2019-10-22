@@ -1,2 +1,2 @@
 # OS19
-This is the homework for os19
+Operating Systems 2019 Project
