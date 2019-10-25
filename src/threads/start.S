@@ -5,7 +5,7 @@
 #### The loader (in loader.S) loads the kernel at physical address
 #### 0x20000 (128 kB) and jumps to "start", defined here.  This code
 #### switches from real mode to 32-bit protected mode and calls
-#### kernel_main().
+#### main().
 
 /* Flags in control register 0. */
 #define CR0_PE 0x00000001      /* Protection Enable. */
@@ -173,13 +173,13 @@ start:
 	mov %ax, %gs
 	mov %ax, %ss
 	addl $LOADER_PHYS_BASE, %esp
-	movl $0, %ebp			# Null-terminate kernel_main()'s backtrace
+	movl $0, %ebp			# Null-terminate main()'s backtrace
 
-#### Call kernel_main().
+#### Call main().
 
-	call kernel_main
+	call main
 
-# kernel_main() shouldn't ever return.  If it does, spin.
+# main() shouldn't ever return.  If it does, spin.
 
 1:	jmp 1b
 .endfunc

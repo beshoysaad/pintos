@@ -70,11 +70,11 @@ static void locate_block_devices (void);
 static void locate_block_device (enum block_type, const char *name);
 #endif
 
-int kernel_main (void) NO_RETURN;
+int main (void) NO_RETURN;
 
 /* Pintos main program. */
 int
-kernel_main (void)
+main (void)
 {
   char **argv;
 
