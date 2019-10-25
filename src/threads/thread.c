@@ -587,12 +587,12 @@ uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 void 
 check_blocked_thread (struct thread *t, void *NOTUSED)
 {
-    if(t->status == THREAD_BLOCKED)
+    if(t->status == THREAD_BLOCKED&&t->blocked_ticks>=1)
     {
         t->blocked_ticks--;
         if(t->blocked_ticks <= 0)
         {
-            thread_unblock(t);
+           sema_up(&t->sema);
         }
     }
 }
