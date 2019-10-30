@@ -61,7 +61,7 @@ bool thread_mlfqs;
 
 static void kernel_thread (thread_func *, void *aux);
 
-static void idle (void *aux UNUSED);
+static void idle (UNUSED void *aux);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
 static void init_thread (struct thread *, const char *name, int priority);
@@ -70,6 +70,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -585,9 +586,9 @@ uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
 /* This function is to check whether the block should be wake up. */
 void 
-check_blocked_thread (struct thread *t, void *NOTUSED)
+check_blocked_thread (struct thread *t, void *aux UNUSED)
 {
-    if(t->status == THREAD_BLOCKED&&t->blocked_ticks>=1)
+    if((t->status == THREAD_BLOCKED) && (t->blocked_ticks > 0))
     {
         t->blocked_ticks--;
         if(t->blocked_ticks <= 0)

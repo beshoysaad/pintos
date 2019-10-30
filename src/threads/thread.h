@@ -139,6 +139,6 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-void check_blocked_thread (struct thread *t, void *NOTUSED);
+void check_blocked_thread (struct thread *t, void *aux UNUSED);
 
 #endif /* threads/thread.h */
