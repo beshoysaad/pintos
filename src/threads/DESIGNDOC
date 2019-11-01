@@ -8,7 +8,7 @@
 
 >> Fill in the names, email addresses and matriculation numbers of your group members.
 
-FirstName LastName <email@domain.example> 9999999
+Daniel Kindler <s8dakind@stud.uni-saarland.de> 2570566
 Sandro Montemezzani <s8samont@stud.uni-saarland.de> 2563261
 
 ---- PRELIMINARIES ----
@@ -29,13 +29,79 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> 2563261
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+Extension of enum thread_status:
+	/* A new possible state. Allows more effecient thread-management */
+	THREAD_SLEEPING
+    
+New member in struct thread:
+    /* A sleeping thread needs to know its time to be woken up */
+    
+    int64_t wakeup_time
+  
+New member in struct thread:
+	/* A new list where threads in state THREAD_SLEEPING are put 
+	 * Instead of busy-wait a thread registers here in order to sleep until a certain time */
+    
+    struct list_elem sleepelem
+      
+/* List of processes in SLEEPING state, that is, processes that wait until
+ * a certain point of time */
+	
+	static struct list sleeping_list;
+    
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe what happens in a call to timer_sleep(),
 >> including the effects of the timer interrupt handler.
 
+modified function timer_sleep(int64_t ticks) :
+	Calls call thread_sleep(start + ticks), where start is the current timer's value.
+	start + ticks is the time when the thread likes to wake up again.
+	In thread_sleep (int64_t wakeup_time):
+	Set current threads status to THREAD_SLEEPING and its wakeup_time to wakeup_time.
+	Then schedules a new thread by calling schedule().
+	schedule chooses a new thread by calling next_thread_to_run (void) (modified too).
+	
+modified function next_thread_to_run (void) :
+	At some times threads on the sleeping_list have to be checked, if they should wake up.
+	That should happen not too often, but frequently.
+	We've chosen next_thread_to_run as the place where sleeping_list is checked.
+	Before a thread from ready_list is chosen as next thread to run, all threads from sleeping_list
+	that are over time will be put on ready_list and thereby get a chance to be chosen.
+	Waking threads up happens by calling the new function void thread_wakeup (int64_t timer).
+
+new function void thread_wakeup (int64_t timer) :
+	The list sleeping_list is ordered. That allows better performance.
+	Iterating through sleeping_list starting with the first element (smallest wakeuptime)
+	until the current elemet's thread's wakeuptime is in the future - then we're done - return.
+	At the end of each iteration, the current element is removed from sleeping_list and put to ready_list.
+	Its status is set to THREAD_READY. 
+	
+What happens when timer interrupt occurs:
+	The program counter jumps to the code of function void intr_handler (struct intr_frame *frame).
+	From this function the timer_interrupt routine is started.
+	ticks is incremented.
+	Then (in function thread_tick()) 
+	thread_ticks is incremented (the number of current thread's ticks since active)
+	If TIME_SLICE is reached, the variable yield_on_return is set to true.
+	The timer interrupt routine returns to interrupt handler.
+	The variables external and yield_on_return are true, so thread_yield() is called.
+	thread_yield() calls schedule calls next_thread_to_run () calls thread_wakeup(timer_ticks()).
+	This is how a timer interrupt could wake up a sleeping thread - if TIME_SLICE has been reached.
+	
+	
 >> A3: What steps are taken to minimize the amount of time spent in
 >> the timer interrupt handler?
+	
+First:
+	The function thread_wakeup(int64_t) is only called when switched to a new thread.
+	It would'nt make any sense to check more often - if the check never leads to a switch itself.
+	For most timer-interrupts the interrupt routine is not longer than usually.
+Second:
+	thread_wakeup(int64_t) iterates over the sleeping_list, waking everyone up whose wakeup_time
+	has been reached. The sleeping_list is ordered, so all missing elements can be skipped if the
+	routine reaches one element that is not yet ready.
 
 ---- SYNCHRONIZATION ----
 

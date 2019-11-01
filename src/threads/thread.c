@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include "devices/timer.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -23,6 +24,10 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+
+/* List of processes in SLEEPING state, that is, processes that wait for
+ * a certain time */
+static struct list sleeping_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -92,6 +97,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&sleeping_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -137,6 +143,30 @@ thread_tick (void)
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+}
+
+void
+thread_wakeup (int64_t timer)
+{
+  /* Go through (ordered) sleeping_list and wakeup until current elem's wakeup_time > timer*/
+  while (!list_empty (&sleeping_list))
+     {
+	   /* Get next element from sleeping_list */
+       struct list_elem *e = list_front(&sleeping_list);
+	   /* From element get thread */
+       struct thread *thr = list_entry (e, struct thread, sleepelem);
+       /* Assert thread's state is sleeping */
+       ASSERT((thr -> status) == THREAD_SLEEPING);
+       /* if current element's wakeup_time not yet reached we are done*/
+       if ((thr -> wakeup_time) > timer)
+	   {
+         return;
+       }
+       /* Executing here only if wakeup_time <= timer. Remove thread from sleeping_list*/
+       thr -> status = THREAD_READY;
+       list_pop_front(&sleeping_list);
+       list_push_back(&ready_list, &thr->elem);
+     }
 }
 
 /* Prints thread statistics. */
@@ -314,6 +344,44 @@ thread_yield (void)
   intr_set_level (old_level);
 }
 
+/* Sleeps thread at least until wakeup_time */
+void
+thread_sleep (int64_t wakeup_time)
+{
+	 struct list_elem *e;
+	 /* Iterating through sleeping_list until correct position for insertion*/
+	 for (e = list_begin (&sleeping_list); e != list_end (&sleeping_list); e = list_next (e))
+	 {
+       struct thread *itThread = list_entry (e, struct thread, sleepelem);
+       ASSERT(itThread -> status == THREAD_SLEEPING);
+	   if ((itThread -> wakeup_time) > wakeup_time)
+	   {
+		   break;
+	   }
+	 }
+	 /* critical section: disable interrupts */
+	 enum intr_level old_level;
+	 old_level = intr_disable ();
+
+	 /* Getting the current thread*/
+	 struct thread *curThread = thread_current ();
+
+	 /* set current thread to sleeping */
+	 curThread -> status = THREAD_SLEEPING;
+	 /* set threads wakeuptime */
+	 curThread -> wakeup_time = wakeup_time;
+	 /* put current thread on sleeping list */
+	 list_insert(e, &(curThread -> sleepelem));
+
+	 /* schedule a new process */
+	 schedule();
+
+	 /* reset interrupt mask */
+	 intr_set_level (old_level);
+
+}
+
+
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
 void
@@ -490,6 +558,9 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
+  /* Give sleeping threads a chance to wake up */
+  thread_wakeup(timer_ticks());
+
   if (list_empty (&ready_list))
     return idle_thread;
   else
