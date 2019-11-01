@@ -11,7 +11,7 @@
 void
 producer_consumer (unsigned int num_producer, unsigned int num_consumer);
 
-#define OUT_BUF_SIZE		32
+#define OUT_BUF_SIZE 32
 
 char hello_str[] = "Hello world";
 char output_str[OUT_BUF_SIZE];
@@ -40,52 +40,54 @@ static void
 producer (UNUSED void *arg)
 {
   for (size_t i = 0; i < sizeof(hello_str); i++)
-    {
-      lock_acquire (&mutex);
-      while (out_buf_write_idx == out_buf_read_idx) // output buffer is full
-	{
-	  cond_wait (&notfull, &mutex);
-	}
-      output_str[out_buf_write_idx] = hello_str[i];
-      out_buf_write_idx = (out_buf_write_idx + 1) % OUT_BUF_SIZE;
-      cond_signal (&notempty, &mutex);
-      lock_release (&mutex);
-    }
+  {
+    lock_acquire (&mutex);
+    while (out_buf_write_idx == out_buf_read_idx) // output buffer is full
+	  {
+	    cond_wait (&notfull, &mutex);
+	  }
+    output_str[out_buf_write_idx] = hello_str[i];
+    out_buf_write_idx = (out_buf_write_idx + 1) % OUT_BUF_SIZE;
+    cond_signal (&notempty, &mutex);
+    lock_release (&mutex);
+  }
 }
 
 static void
 consumer (UNUSED void *arg)
 {
   while (true)
-    {
-      lock_acquire (&mutex);
-      while ((out_buf_read_idx + 1) % OUT_BUF_SIZE == out_buf_write_idx) // buffer is empty
-	{
-	  cond_wait (&notempty, &mutex);
-	}
-      out_buf_read_idx = (out_buf_read_idx + 1) % OUT_BUF_SIZE;
-      printf ("%c", output_str[out_buf_read_idx]);
-      cond_signal (&notfull, &mutex);
-      lock_release (&mutex);
-    }
+  {
+    lock_acquire (&mutex);
+    while ((out_buf_read_idx + 1) % OUT_BUF_SIZE == out_buf_write_idx) // buffer is empty
+	  {
+	    cond_wait (&notempty, &mutex);
+	  }
+    out_buf_read_idx = (out_buf_read_idx + 1) % OUT_BUF_SIZE;
+    printf ("%c", output_str[out_buf_read_idx]);
+    cond_signal (&notfull, &mutex);
+    lock_release (&mutex);
+  }
 }
 
 void
 producer_consumer (unsigned int num_producer, unsigned int num_consumer)
 {
+  ASSERT(num_consumer>0 && num_producer>0);
+
   char name[32];
   lock_init (&mutex);
   cond_init (&notfull);
   cond_init (&notempty);
   /*create threads for producer and consumer*/
   for (unsigned int i = 0; i < num_producer; i++)
-    {
-      snprintf (name, sizeof(name), "producer_%d", i);
-      thread_create (name, PRI_DEFAULT, producer, NULL);
-    }
+  {
+    snprintf (name, sizeof(name), "producer_%d", i);
+    thread_create (name, PRI_DEFAULT, producer, NULL);
+  }
   for (unsigned int i = 0; i < num_consumer; i++)
-    {
-      snprintf (name, sizeof(name), "consumer_%d", i);
-      thread_create (name, PRI_DEFAULT, consumer, NULL);
-    }
+  {
+    snprintf (name, sizeof(name), "consumer_%d", i);
+    thread_create (name, PRI_DEFAULT, consumer, NULL);
+  }
 }
