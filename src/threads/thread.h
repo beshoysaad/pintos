@@ -90,10 +90,10 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
-    int64_t blocked_ticks;              /* record the blocked time. */
+    int64_t ticks_to_sleep;             /* Number of clock ticks to sleep */
+    struct semaphore sema_sleep;	/* Semaphore used to wake thread up after sleeping */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    struct semaphore sema;
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */

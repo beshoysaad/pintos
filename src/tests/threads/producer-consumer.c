@@ -14,10 +14,12 @@ producer_consumer (unsigned int num_producer, unsigned int num_consumer);
 #define OUT_BUF_SIZE 32
 
 char hello_str[] = "Hello world";
-char output_str[OUT_BUF_SIZE];
+char output_str[OUT_BUF_SIZE]; // this is a circular FIFO buffer
 struct lock mutex;
 struct condition notfull;
 struct condition notempty;
+
+// Producer writes at current index then proceeds, while consumer proceeds first then reads current index
 size_t out_buf_read_idx = 0, out_buf_write_idx = 1;
 
 void
@@ -46,8 +48,8 @@ producer (UNUSED void *arg)
 	{
 	  cond_wait (&notfull, &mutex);
 	}
-      output_str[out_buf_write_idx] = hello_str[i];
-      out_buf_write_idx = (out_buf_write_idx + 1) % OUT_BUF_SIZE;
+      output_str[out_buf_write_idx] = hello_str[i]; // write
+      out_buf_write_idx = (out_buf_write_idx + 1) % OUT_BUF_SIZE; // proceed
       cond_signal (&notempty, &mutex);
       lock_release (&mutex);
     }
@@ -63,8 +65,8 @@ consumer (UNUSED void *arg)
 	{
 	  cond_wait (&notempty, &mutex);
 	}
-      out_buf_read_idx = (out_buf_read_idx + 1) % OUT_BUF_SIZE;
-      printf ("%c", output_str[out_buf_read_idx]);
+      out_buf_read_idx = (out_buf_read_idx + 1) % OUT_BUF_SIZE; // proceed
+      printf ("%c", output_str[out_buf_read_idx]); // read
       cond_signal (&notfull, &mutex);
       lock_release (&mutex);
     }

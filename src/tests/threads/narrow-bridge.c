@@ -20,11 +20,11 @@
 #define DIRECTION_LEFT     	0
 #define DIRECTION_RIGHT    	1
 
-#define LOW_PRIORITY       	0
-#define HIGH_PRIORITY	   	1
+#define PRIORITY_LOW       	0
+#define PRIORITY_HIGH	   	1
 
-struct semaphore sema_cars;
-struct semaphore sema_modify;
+struct semaphore sema_num_vehicles;
+struct semaphore sema_bridge_status;
 
 struct bridge_status
 {
@@ -70,17 +70,17 @@ test_narrow_bridge (void)
 static void
 ArriveBridgeEmergency (int direc)
 {
-  sema_down (&sema_modify);
+  sema_down (&sema_bridge_status);
   b.num_emergency_waiting++;
-  sema_up (&sema_modify);
+  sema_up (&sema_bridge_status);
   while (true)
     {
-      sema_down (&sema_cars);
-      sema_down (&sema_modify);
+      sema_down (&sema_num_vehicles);
+      sema_down (&sema_bridge_status);
       if ((b.num_vehicles > 0) && (b.direction != direc))
 	{
-	  sema_up (&sema_modify);
-	  sema_up (&sema_cars);
+	  sema_up (&sema_bridge_status);
+	  sema_up (&sema_num_vehicles);
 	  continue;
 	}
       else
@@ -88,7 +88,7 @@ ArriveBridgeEmergency (int direc)
 	  b.direction = direc;
 	  b.num_vehicles++;
 	  b.num_emergency_waiting--;
-	  sema_up (&sema_modify);
+	  sema_up (&sema_bridge_status);
 	  return;
 	}
     }
@@ -99,20 +99,20 @@ ArriveBridgeRegular (int direc)
 {
   while (true)
     {
-      sema_down (&sema_cars);
-      sema_down (&sema_modify);
+      sema_down (&sema_num_vehicles);
+      sema_down (&sema_bridge_status);
       if ((b.num_emergency_waiting > 0)
 	  || ((b.num_vehicles > 0) && (b.direction != direc)))
 	{
-	  sema_up (&sema_modify);
-	  sema_up (&sema_cars);
+	  sema_up (&sema_bridge_status);
+	  sema_up (&sema_num_vehicles);
 	  continue;
 	}
       else
 	{
 	  b.direction = direc;
 	  b.num_vehicles++;
-	  sema_up (&sema_modify);
+	  sema_up (&sema_bridge_status);
 	  return;
 	}
     }
@@ -124,7 +124,7 @@ ArriveBridgeRegular (int direc)
 static void
 ArriveBridge (int direc, int prio)
 {
-  if (prio == HIGH_PRIORITY)
+  if (prio == PRIORITY_HIGH)
     {
       ArriveBridgeEmergency (direc);
     }
@@ -141,7 +141,7 @@ ArriveBridge (int direc, int prio)
 static void
 CrossBridge (int direc, int prio)
 {
-  char *priority = (prio == HIGH_PRIORITY ? "Emergency" : "Regular");
+  char *priority = (prio == PRIORITY_HIGH ? "Emergency" : "Regular");
   char *direction = (direc == DIRECTION_LEFT ? "left" : "right");
   printf ("%s vehicle entered bridge in %s direction.\r\n", priority,
 	  direction);
@@ -152,10 +152,10 @@ CrossBridge (int direc, int prio)
 static void
 ExitBridge (int direc UNUSED, int prio UNUSED)
 {
-  sema_down (&sema_modify);
+  sema_down (&sema_bridge_status);
   b.num_vehicles--;
-  sema_up (&sema_modify);
-  sema_up (&sema_cars);
+  sema_up (&sema_bridge_status);
+  sema_up (&sema_num_vehicles);
 }
 
 static void
@@ -179,8 +179,8 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
 	       unsigned int num_emergency_left,
 	       unsigned int num_emergency_right)
 {
-  sema_init (&sema_cars, 3);
-  sema_init (&sema_modify, 1);
+  sema_init (&sema_num_vehicles, 3);
+  sema_init (&sema_bridge_status, 1);
 
   if (num_emergency_left > num_emergency_right)
     {
@@ -189,7 +189,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
 	  struct car_params *p = (struct car_params*) malloc (
 	      sizeof(struct car_params));
 	  p->direction = DIRECTION_LEFT;
-	  p->priority = HIGH_PRIORITY;
+	  p->priority = PRIORITY_HIGH;
 	  thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
 	}
       for (unsigned int i = 0; i < num_emergency_right; i++)
@@ -197,7 +197,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
 	  struct car_params *p = (struct car_params*) malloc (
 	      sizeof(struct car_params));
 	  p->direction = DIRECTION_RIGHT;
-	  p->priority = HIGH_PRIORITY;
+	  p->priority = PRIORITY_HIGH;
 	  thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
 	}
 
@@ -209,7 +209,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
 	  struct car_params *p = (struct car_params*) malloc (
 	      sizeof(struct car_params));
 	  p->direction = DIRECTION_RIGHT;
-	  p->priority = HIGH_PRIORITY;
+	  p->priority = PRIORITY_HIGH;
 	  thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
 	}
       for (unsigned int i = 0; i < num_emergency_left; i++)
@@ -217,7 +217,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
 	  struct car_params *p = (struct car_params*) malloc (
 	      sizeof(struct car_params));
 	  p->direction = DIRECTION_LEFT;
-	  p->priority = HIGH_PRIORITY;
+	  p->priority = PRIORITY_HIGH;
 	  thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
 	}
     }
@@ -227,7 +227,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
       struct car_params *p = (struct car_params*) malloc (
 	  sizeof(struct car_params));
       p->direction = DIRECTION_LEFT;
-      p->priority = LOW_PRIORITY;
+      p->priority = PRIORITY_LOW;
       thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
     }
   for (unsigned int i = 0; i < num_vehicles_right; i++)
@@ -235,7 +235,7 @@ narrow_bridge (unsigned int num_vehicles_left, unsigned int num_vehicles_right,
       struct car_params *p = (struct car_params*) malloc (
 	  sizeof(struct car_params));
       p->direction = DIRECTION_RIGHT;
-      p->priority = LOW_PRIORITY;
+      p->priority = PRIORITY_LOW;
       thread_create ("", PRI_DEFAULT, car_thread, (void*) p);
     }
 }

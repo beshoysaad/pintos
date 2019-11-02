@@ -96,9 +96,9 @@ timer_sleep (int64_t ticks)
   ASSERT (intr_get_level() == INTR_ON);
   enum intr_level previous_level = intr_disable();
   struct thread* current_thread = thread_current();
-  current_thread->blocked_ticks = ticks;
-  sema_init (&(current_thread->sema),0);
-  sema_down (&(current_thread->sema));
+  current_thread->ticks_to_sleep = ticks;
+  sema_init (&(current_thread->sema_sleep),0);
+  sema_down (&(current_thread->sema_sleep));
   intr_set_level (previous_level);
 }
 

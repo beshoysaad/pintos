@@ -464,6 +464,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  t->ticks_to_sleep = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -584,16 +585,16 @@ allocate_tid (void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
-/* This function is to check whether the block should be wake up. */
+/* This function is to check whether sleeping thread t should wake up. */
 void 
 check_blocked_thread (struct thread *t, void *aux UNUSED)
 {
-    if((t->status == THREAD_BLOCKED) && (t->blocked_ticks > 0))
+    if((t->status == THREAD_BLOCKED) && (t->ticks_to_sleep > 0))
     {
-        t->blocked_ticks--;
-        if(t->blocked_ticks <= 0)
+        t->ticks_to_sleep--;
+        if(t->ticks_to_sleep <= 0)
         {
-           sema_up(&t->sema);
+           sema_up(&t->sema_sleep);
         }
     }
 }
