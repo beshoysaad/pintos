@@ -97,7 +97,7 @@ ArriveBridgeEmergency (int direc)
 static void
 ArriveBridgeRegular (int direc)
 {
-  while (true)//this should just print out a debug message upon entrance, sleep the thread for a random amount of time, and print
+  while (true)
     {
       sema_down (&sema_cars);
       sema_down (&sema_modify);

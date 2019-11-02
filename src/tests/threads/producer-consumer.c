@@ -19,8 +19,6 @@ struct lock mutex;
 struct condition notfull;
 struct condition notempty;
 size_t out_buf_read_idx = 0, out_buf_write_idx = 1;
-unsigned int producer_finish = 0;
-unsigned int producer_num = 0;
 
 void
 test_producer_consumer (void)
@@ -53,7 +51,6 @@ producer (UNUSED void *arg)
       cond_signal (&notempty, &mutex);
       lock_release (&mutex);
     }
-  producer_finish++;
 }
 
 static void
@@ -64,11 +61,6 @@ consumer (UNUSED void *arg)
       lock_acquire (&mutex);
       while ((out_buf_read_idx + 1) % OUT_BUF_SIZE == out_buf_write_idx) // buffer is empty
 	{
-    if(producer_num==producer_finish)// if no producer and no buffer, exit
-    {
-      lock_release (&mutex);
-      return;
-    }
 	  cond_wait (&notempty, &mutex);
 	}
       out_buf_read_idx = (out_buf_read_idx + 1) % OUT_BUF_SIZE;
@@ -76,7 +68,6 @@ consumer (UNUSED void *arg)
       cond_signal (&notfull, &mutex);
       lock_release (&mutex);
     }
-    
 }
 
 void
@@ -86,7 +77,6 @@ producer_consumer (unsigned int num_producer, unsigned int num_consumer)
   lock_init (&mutex);
   cond_init (&notfull);
   cond_init (&notempty);
-  producer_num = num_producer;
   /*create threads for producer and consumer*/
   for (unsigned int i = 0; i < num_producer; i++)
     {
