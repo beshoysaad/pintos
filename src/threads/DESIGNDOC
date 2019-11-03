@@ -8,8 +8,8 @@
 
 >> Fill in the names, email addresses and matriculation numbers of your group members.
 
-FirstName LastName <email@domain.example> 9999999
-FirstName LastName <email@domain.example> 9999999
+Beshoy Saad <s8besaad@stud.uni-saarland.de> 2572741
+Xuwen Yao <s8xuyaoo@stud.uni-saarland.de> 2576017
 
 ---- PRELIMINARIES ----
 
@@ -29,26 +29,57 @@ FirstName LastName <email@domain.example> 9999999
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+Added to struct thread two new members: 
+	
+	int64_t ticks_to_sleep;             /* Number of clock ticks to sleep */
+	- Keeps track of the number of clock ticks for the thread to sleep as 
+	passed to timer_sleep()
+	
+	struct semaphore sema_sleep;	/* Semaphore used to wake thread up after sleeping */
+	- Used to put the thread to sleep (by downing the semaphore) and wake it
+	up (by upping the semaphore) after approximately ticks_to_sleep timer ticks
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe what happens in a call to timer_sleep(),
 >> including the effects of the timer interrupt handler.
 
+When timer_sleep() is called, interrupts are first disabled because we are about to 
+modify a shared variable (ticks_to_sleep). Then, the member ticks_to_sleep of the current
+thread struct is updated with the value passed to timer_sleep() as ticks. Next, we initialize
+the semaphore sema_sleep with the value 0 and then call sema_down() on it, which results in 
+the thread getting blocked until the semaphore is upped. Finally, we restore interrupts.
+In the timer interrupt handler, we decrement ticks_to_sleep of any thread that is sleeping
+(i.e. blocked + ticks_to_sleep > 0). When ticks_to_sleep reaches zero, we up the semaphore 
+which results in the sleeping thread getting unblocked.
+
+
 >> A3: What steps are taken to minimize the amount of time spent in
 >> the timer interrupt handler?
+
+TODO
 
 ---- SYNCHRONIZATION ----
 
 >> A4: How are race conditions avoided when multiple threads call
 >> timer_sleep() simultaneously?
 
+Race conditions are avoided by disabling interrupts at the beginning of the 
+function and restoring them at the end
+
 >> A5: How are race conditions avoided when a timer interrupt occurs
 >> during a call to timer_sleep()?
+
+Since interrupts are disabled for the duration of timer_sleep(), if a timer interrupt
+occurs during a call to timer_sleep() it will be postponed until the function returns,
+thus avoiding race conditions
 
 ---- RATIONALE ----
 
 >> A6: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
+
+TODO
 
 
     		     PROD/CONS
