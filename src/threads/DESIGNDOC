@@ -90,18 +90,48 @@ TODO
 >> B1: How does your solution guarantee that consumers will hold until
 >> there is something to consume in the buffer?
 
+We have two variables that control access to the shared buffer: out_buf_read_idx and out_buf_write_idx.
+We treat the shared buffer output_str as a circular FIFO buffer, where producers write at index 
+out_buf_write_idx then increment it, while consumers increment out_buf_read_idx first then read at that
+index. out_buf_write_idx is initialized to 1 while out_buf_read_idx is initialized to 0. This means that
+as long as out_buf_write_idx is 1 ahead of out_buf_read_idx, the buffer is empty. We use a struct lock
+(mutex) and a struct condition (notempty) to emulate a monitor that waits for the buffer to be non-empty.
+We first acquire the lock to do an atomic read of the write and read index variables, and then check if
+the buffer is empty using the criterion described above. If it is in fact empty, we wait on the condition 
+variable notempty, which has the effect of releasing the lock until the condition variable is signaled by
+the producer thread.
+
 >> B2: How does your solution guarantee that producers will hold until
 >> there is some free space in the buffer?
 
+Similar to last answer, we acquire the lock to access the read and write indexes atomically. Then we check
+if the buffer is full by comparing out_buf_write_idx with out_buf_read_idx. If they are the same, then the
+buffer is full and the thread waits on the condition variable notfull, resuming only when it is signaled by
+the consumer thread.
+
 >> B3: How does your solution preserve a FIFO semantics i.e., the first
 >> character produced will be the first to be consumed?
+
+By using the two index variables out_buf_write_idx and out_buf_read_idx to write and read from the shared
+buffer, respectively. The producer thread first writes at index out_buf_write_idx then increments it, while 
+the consumer thread first increments out_buf_read_idx then reads from it. Together with the synchronization
+mechanism that ensures that out_buf_write_idx doesn't exceed out_buf_read_idx by more than OUT_BUF_SIZE,
+we preserve FIFO sematics.
 
 ---- RATIONALE ----
 
 >> B4: Give an intuition for why your program preserves safety.
 
+Since no thread (producer or consumer) can change any shared variable (indexes or output buffer) without 
+first acquiring the lock, either explicitly or by returning from cond_wait(), we can guarantee that all 
+accesses to shared variables are atomic and thus safety is preserved.
+
 >> B5: Why did you choose this design? Did you consider other design
 >> alternatives? In what ways is it superior to another design you considered?
+
+The design we used is very common for producer-consumer problems. In fact, it essentially follows the 
+monitor example given in the pintos project reference guide section A.3.4.1. We didn't consider other
+designs.
 
 
 			     NARROW BRIDGE
@@ -112,24 +142,61 @@ TODO
 >> C1: How does your solution guarantee that no more that 3 vehicles
 >> are crossing the bridge in the same direction?
 
+We use a semaphore sema_num_vehicles which is initialized to 3. Whenever a vehicle wants to cross,
+it first downs the semaphore which blocks it if there's already 3 vehicles on the bridge. Any 
+vehicle that exits the bridge ups the semaphore, allowing waiting vehicles to cross while still
+preserving the maximum vehicle limit. To maintain that vehicles only cross the bridge in one 
+direction, we created a struct bridge_status which keeps track of the current traffic direction 
+as well as other parameters. Access to this struct is protected by a binary semaphore sema_bridge_status,
+which must be downed by any thread trying to read or modify it. When there's a free spot on the bridge 
+as indicated by the sema_num_vehicles semaphore, a vehicle thread checks the status struct after downing 
+sema_bridge_status. It only proceeds to cross if the current direction is the same as its own direction
+or if the number of vehicles on the bridge is zero, allowing it to change the bridge's direction to match
+its own.
+
 >> C2: What prevents vehicles from opposite directions from crossing the
 >> bridge simultaneously?
 
+As explained in the previous answer, the bridge status struct combined with the binary semaphore protecting
+access to it ensure that vehicles only cross the bridge in one direction. If a vehicle sees that the current
+direction is different from its own direction, it will not cross the bridge even if there's space and it will 
+up both sema_bridge_status and sema_num_vehicles, trying again later.
+
 >> C3: How does your solution grant priority to emergency vehicles over
 >> the queue of vehicles ahead in the same direction?
+
+The bridge status struct contains a member num_emergency_waiting which is incremented whenever a high-priority
+vehicle arrives at the bridge. This variable is checked by any low-priority vehicle thread that is trying to cross,
+and if it is not zero then low-priority vehicles up the semaphores and try again in the next loop iteration, 
+effectively giving high-priority vehicles priority to successfully cross the bridge.
 
 >> C4: How do you guarantee that despite having priority, emergency vehicles
 >> do not start crossing the bridge while there are still vehicles crossing
 >> it in the oposite direction?
 
+Emergency vehicles do the same check on the direction member of the bridge status struct as all other vehicles
+to ensure that the bridge remains strictly one-direction.
+
 >> C5: Explain with examples why your solution does not preserve neither
 >> fairness nor freedom from starvation, other than what has been indicated
 >> for emergency vehicles.
+
+Suppose we have 7 emergency vehicles coming from the left and 1 from the right. Our design will  
+grant the 7 from the left access first before the one from the right, starving it until all others
+are done. This is unfair to the 1 emergency vehicle on the right but it minimizes the total waiting time
+by pipelining vehicles from one side (the left side in this case). 
 
 ---- RATIONALE ----
 
 >> C6: Why did you choose this design? Did you consider other design
 >> alternatives? In what ways is it superior to another design you considered?
+
+This design is simple, intuitive and performs the required task. One drawback of this design is that
+vehicle threads that fail one of the checks on the bridge status (e.g. wrong direction or emergency 
+vehicle waiting) after successfully downing the sema_num_vehicles semaphore will immediately retry in
+the next loop iteration. It would be better if the vehicle thread could be blocked until all the 
+necessary conditions are met, but we couldn't come up with a solution that does this using only
+semaphores.
 
 
 			   SURVEY QUESTIONS
