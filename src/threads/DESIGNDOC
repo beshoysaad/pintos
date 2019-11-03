@@ -57,7 +57,10 @@ which results in the sleeping thread getting unblocked.
 >> A3: What steps are taken to minimize the amount of time spent in
 >> the timer interrupt handler?
 
-TODO
+In every timer interrupt, we only refresh the sleeping time for sleeping threads 
+and check whether they need to wake up. We don't do extra things to minimize the 
+amount of time spent in timer interrupt. For example, we don't care threads which
+are not sleeping.
 
 ---- SYNCHRONIZATION ----
 
@@ -79,7 +82,11 @@ thus avoiding race conditions
 >> A6: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
 
-TODO
+In order to avoid busy waiting, we need to let every sleeping thread to know when they should
+wake up. For this purpose, every thread needs a variable storing the sleeping time. We only need 
+to take are of this variable in timer interrupt. And in other time, we can do other things without 
+taking care of waking up the thread.
+
 
 
     		     PROD/CONS
