@@ -9,7 +9,7 @@
 >> Fill in the names, email addresses and matriculation numbers of your group members.
 
 Beshoy Saad <s8besaad@stud.uni-saarland.de> 2572741
-Xuwen Yao <s8xuyaoo@stud.uni-saarland.de> 2576017
+Xuwen  Yao  <s8xuyaoo@stud.uni-saarland.de> 2576017
 
 ---- PRELIMINARIES ----
 
@@ -39,6 +39,7 @@ Added to struct thread two new members:
 	- Used to put the thread to sleep (by downing the semaphore) and wake it
 	up (by upping the semaphore) after approximately ticks_to_sleep timer ticks
 
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe what happens in a call to timer_sleep(),
@@ -59,8 +60,9 @@ which results in the sleeping thread getting unblocked.
 
 In every timer interrupt, we only refresh the sleeping time for sleeping threads 
 and check whether they need to wake up. We don't do extra things to minimize the 
-amount of time spent in timer interrupt. For example, we don't care threads which
-are not sleeping.
+amount of time spent in timer interrupt. For example, we don't care about threads
+which are not sleeping.
+
 
 ---- SYNCHRONIZATION ----
 
@@ -68,25 +70,27 @@ are not sleeping.
 >> timer_sleep() simultaneously?
 
 Race conditions are avoided by disabling interrupts at the beginning of the 
-function and restoring them at the end
+function and restoring them at the end.
+
 
 >> A5: How are race conditions avoided when a timer interrupt occurs
 >> during a call to timer_sleep()?
 
 Since interrupts are disabled for the duration of timer_sleep(), if a timer interrupt
 occurs during a call to timer_sleep() it will be postponed until the function returns,
-thus avoiding race conditions
+thus avoiding race conditions.
+
 
 ---- RATIONALE ----
 
->> A6: Why did you choose this design?  In what ways is it superior to
+>> A6: Why did you choose this design? In what ways is it superior to
 >> another design you considered?
 
-In order to avoid busy waiting, we need to let every sleeping thread to know when they should
+In order to avoid busy waiting, we need to let every sleeping thread know when they should
 wake up. For this purpose, every thread needs a variable storing the sleeping time. We only need 
-to take are of this variable in timer interrupt. And in other time, we can do other things without 
-taking care of waking up the thread.
-
+to take care of this variable in timer interrupt. At any other time, we can do other things without 
+taking care of waking up the thread. Also, we first considered calling thread_block() and 
+thread_unblock() directly, but found using semaphores to be a much more elegant solution.
 
 
     		     PROD/CONS
@@ -108,6 +112,7 @@ the buffer is empty using the criterion described above. If it is in fact empty,
 variable notempty, which has the effect of releasing the lock until the condition variable is signaled by
 the producer thread.
 
+
 >> B2: How does your solution guarantee that producers will hold until
 >> there is some free space in the buffer?
 
@@ -115,6 +120,7 @@ Similar to last answer, we acquire the lock to access the read and write indexes
 if the buffer is full by comparing out_buf_write_idx with out_buf_read_idx. If they are the same, then the
 buffer is full and the thread waits on the condition variable notfull, resuming only when it is signaled by
 the consumer thread.
+
 
 >> B3: How does your solution preserve a FIFO semantics i.e., the first
 >> character produced will be the first to be consumed?
@@ -125,6 +131,7 @@ the consumer thread first increments out_buf_read_idx then reads from it. Togeth
 mechanism that ensures that out_buf_write_idx doesn't exceed out_buf_read_idx by more than OUT_BUF_SIZE,
 we preserve FIFO sematics.
 
+
 ---- RATIONALE ----
 
 >> B4: Give an intuition for why your program preserves safety.
@@ -132,6 +139,7 @@ we preserve FIFO sematics.
 Since no thread (producer or consumer) can change any shared variable (indexes or output buffer) without 
 first acquiring the lock, either explicitly or by returning from cond_wait(), we can guarantee that all 
 accesses to shared variables are atomic and thus safety is preserved.
+
 
 >> B5: Why did you choose this design? Did you consider other design
 >> alternatives? In what ways is it superior to another design you considered?
@@ -161,6 +169,7 @@ sema_bridge_status. It only proceeds to cross if the current direction is the sa
 or if the number of vehicles on the bridge is zero, allowing it to change the bridge's direction to match
 its own.
 
+
 >> C2: What prevents vehicles from opposite directions from crossing the
 >> bridge simultaneously?
 
@@ -168,6 +177,7 @@ As explained in the previous answer, the bridge status struct combined with the 
 access to it ensure that vehicles only cross the bridge in one direction. If a vehicle sees that the current
 direction is different from its own direction, it will not cross the bridge even if there's space and it will 
 up both sema_bridge_status and sema_num_vehicles, trying again later.
+
 
 >> C3: How does your solution grant priority to emergency vehicles over
 >> the queue of vehicles ahead in the same direction?
@@ -177,12 +187,14 @@ vehicle arrives at the bridge. This variable is checked by any low-priority vehi
 and if it is not zero then low-priority vehicles up the semaphores and try again in the next loop iteration, 
 effectively giving high-priority vehicles priority to successfully cross the bridge.
 
+
 >> C4: How do you guarantee that despite having priority, emergency vehicles
 >> do not start crossing the bridge while there are still vehicles crossing
 >> it in the oposite direction?
 
 Emergency vehicles do the same check on the direction member of the bridge status struct as all other vehicles
 to ensure that the bridge remains strictly one-direction.
+
 
 >> C5: Explain with examples why your solution does not preserve neither
 >> fairness nor freedom from starvation, other than what has been indicated
@@ -192,6 +204,7 @@ Suppose we have 7 emergency vehicles coming from the left and 1 from the right. 
 grant the 7 from the left access first before the one from the right, starving it until all others
 are done. This is unfair to the 1 emergency vehicle on the right but it minimizes the total waiting time
 by pipelining vehicles from one side (the left side in this case). 
+
 
 ---- RATIONALE ----
 
