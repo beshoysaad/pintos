@@ -178,24 +178,54 @@ program logic, and thus shoudl be safer.
 >> C1: How does your solution guarantee that no more that 3 vehicles
 >> are crossing the bridge in the same direction?
 
+We used a semaphore `bridge_vehicles' which has an initial capacity
+of 3. With every vehicle entering the bridge, this semaphore value
+is decrease, and while exiting it is increased again. Thus, only
+three vehicles at a time can cross the bridge.
+
 >> C2: What prevents vehicles from opposite directions from crossing the
 >> bridge simultaneously?
 
+We introduces a bridge property `current_direction', indicating the current
+direction of the vehicle flow. A vehicle does only enter the bridge if
+it is in the same direction as `current_direction'.
+
 >> C3: How does your solution grant priority to emergency vehicles over
 >> the queue of vehicles ahead in the same direction?
+
+We introduces `bridge_priority_{left,right}' as kind of atomic counters
+for how many emergency vehicles are waiting on each side. New normal
+vehicles will only enter the bridge, if there is no emergency vehicles
+waiting on either side. This is enforced inside of the
+condition `gives_precendence' of `vehicle_arrive()'.
 
 >> C4: How do you guarantee that despite having priority, emergency vehicles
 >> do not start crossing the bridge while there are still vehicles crossing
 >> it in the oposite direction?
 
+Emergency Vehicles do still wait until the bridge is empty, if the current
+bridge direction is not their own. This is enforced inside of the
+condition `can_go' of `vehicle_arrive()'.
+
 >> C5: Explain with examples why your solution does not preserve neither
 >> fairness nor freedom from starvation, other than what has been indicated
 >> for emergency vehicles.
+
+If an near infinite amount of vehicles come from the left, so that they
+will always have at least one vehicle in that direction on the bridge,
+and only one single vehicle wants to pass from the right. The vehicle
+from the right would starve in that case as it would never be able
+to switch the direction of the bridge. Basically, the switch of directions
+can only be forced by an emergency vehicle comming from that direction.
 
 ---- RATIONALE ----
 
 >> C6: Why did you choose this design? Did you consider other design
 >> alternatives? In what ways is it superior to another design you considered?
+
+We first tried using four seperate semaphores for each direction,priority
+combination, but struggled to come to an solution with that design.
+So lastly, we settled with using this design.
 
 
 			   SURVEY QUESTIONS
@@ -209,6 +239,10 @@ the semester.
 
 >> In your opinion, was this assignment, or any one of the three problems
 >> in it, too easy or too hard?  Did it take too long or too little time?
+
+The first exercize was fairly simple, the second one as well. The third
+one however was pretty hard to get it's head around, especially since
+the semaphores-only constraint.
 
 >> Did you find that working on a particular part of the assignment gave
 >> you greater insight into some aspect of OS design?
