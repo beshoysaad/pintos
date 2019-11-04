@@ -125,18 +125,49 @@ Second:
 >> B1: How does your solution guarantee that consumers will hold until
 >> there is something to consume in the buffer?
 
+It is guaranteed that consumers will hold until there is something to
+consume since they will first check whether the buffer is empty. If it is
+actually empty, they will suspend the thread execution until `buffer_not_emtpy'
+is signaled to them. And only then they continue with consuming a character.
+And since the check whether the buffer is empty is guarded the aquisition
+of a lock, it is ensured that only one consumer at a time performs this check.
+
 >> B2: How does your solution guarantee that producers will hold until
 >> there is some free space in the buffer?
 
+It is guaranteed that producers will hold until there is free space in the
+buffer since for each character they want to produce, they will first check
+whether the buffer is not full. If it is full, the suspend the thread
+execution until `buffer_not_full' is signaled to them, and only then they
+continue producing that character.
+And since the check whether the buffer is already full is guarded by the
+aquisition of a lock, it is ensured that only one producer at a time performs
+this check.
+
 >> B3: How does your solution preserve a FIFO semantics i.e., the first
 >> character produced will be the first to be consumed?
+
+The buffer is implemented as a circular buffer with constant length N.
+It has a current reading index and a current writing index. Each read
+or write targets the character with the according index in the buffer, and
+afterwards the accroding index will be increased. If the index then overflows
+the size of the buffer, it will be reset to the front of the buffer.
+Therefore, if the reading index and writing index are the same, the buffer
+is either empty or full, thus we need to store the amount of currently stored
+items as well.
 
 ---- RATIONALE ----
 
 >> B4: Give an intuition for why your program preserves safety.
 
+The program is preserving safety since every access to both buffer and output
+are guard behind a lock. Thus, no data races should occur.
+
 >> B5: Why did you choose this design? Did you consider other design
 >> alternatives? In what ways is it superior to another design you considered?
+
+we chose this design since it does not lead to too much complexity in the
+program logic, and thus shoudl be safer.
 
 
 			     NARROW BRIDGE
