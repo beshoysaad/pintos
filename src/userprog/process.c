@@ -20,12 +20,12 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-void parser_commands(char* command_temp, int* argc, char* argv[]);
+void parser_commands(char* command, int* argc, char* argv[]);
 
-void parser_commands(char* command_temp, int* argc, char* argv[])
+void parser_commands(char* command, int* argc, char* argv[])
 {
      char* save = NULL;//use in strtok_r, save previous command
-     argv[*argc] = strtok_r(command_temp, " ", &save);//parser
+     argv[*argc] = strtok_r(command, " ", &save);//parser
     
      while (argv[*argc]!=NULL)
      {
@@ -49,7 +49,7 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-
+  
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
@@ -66,8 +66,6 @@ start_process (void *file_name_)
     return TID_ERROR;
 
   char *file_name = file_name_;
-  char* command_temp = (char* )malloc(sizeof(file_name));//avoid parser function changing filename
-  strlcpy(command_temp,file_name,PGSIZE);
   struct intr_frame if_;
 
   /* Initialize interrupt frame and load executable. */
@@ -78,14 +76,13 @@ start_process (void *file_name_)
   
   char* argv[ARGC_MAX];
   int argc = 0;
-  parser_commands(command_temp, &argc, argv);
+  parser_commands(file_name, &argc, argv);
   bool success = load (argv[0], &if_.eip, &if_.esp);
   
   /* If load failed, quit. */
   if (!success)
   {
     palloc_free_page (file_name);
-    free(command_temp);
     thread_exit ();
   }
 
@@ -129,7 +126,7 @@ start_process (void *file_name_)
   (*(int *)if_.esp) = 0;
   
   palloc_free_page (file_name);
-  free(command_temp);
+  
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
