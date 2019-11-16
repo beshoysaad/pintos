@@ -20,6 +20,18 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+void parser_commands(char* command_temp, int* argc, char* argv[]);
+
+void parser_commands(char* command_temp, int* argc, char* argv[])
+{
+     char* save = NULL;//use in strtok_r, save previous command
+     argv[*argc] = strtok_r(command_temp, " ", &save);//parser
+    
+     while (argv[*argc]!=NULL)
+     {
+        argv[++(*argc)] = strtok_r(NULL, " ", &save);
+     } 
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -50,21 +62,74 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
+  if(file_name_ == NULL)
+    return TID_ERROR;
+
   char *file_name = file_name_;
+  char* command_temp = (char* )malloc(sizeof(file_name));//avoid parser function changing filename
+  strlcpy(command_temp,file_name,PGSIZE);
   struct intr_frame if_;
-  bool success;
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
-
+  
+  char* argv[ARGC_MAX];
+  int argc = 0;
+  parser_commands(command_temp, &argc, argv);
+  bool success = load (argv[0], &if_.eip, &if_.esp);
+  
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  if (!success)
+  {
+    palloc_free_page (file_name);
+    free(command_temp);
     thread_exit ();
+  }
+
+  /*push the address of parameters*/
+  char * ptr_address[argc];
+  for(int i=argc-1; i>=0; i--)
+  {
+      int str_size = sizeof(argv[i]);
+      if_.esp = if_.esp - str_size;//move the stack pointer
+      memcpy(if_.esp, argv[i], str_size);
+      ptr_address[i]=(char *)if_.esp;
+  } 
+  
+  /*world-align*/
+  while ((int)if_.esp%base_offset != 0) 
+  {
+    if_.esp--;
+  }
+  
+  /*push argv address extend*/
+  if_.esp = if_.esp - base_offset;
+  (*(int *)if_.esp) = 0;
+
+  /*push the address of address of parameters*/
+  for(int i=argc-1; i>=0; i--)
+  {
+    if_.esp = if_.esp - base_offset;
+    (*(char **)if_.esp) = ptr_address[i]; 
+  }
+
+  /*push the address of argv*/
+  if_.esp = if_.esp - base_offset;
+  (*(char **)if_.esp) = if_.esp + base_offset;
+
+  /*push the address of argc*/
+  if_.esp = if_.esp - base_offset;
+  (*(int *)if_.esp) = argc;
+ 
+  /*push 0*/
+  if_.esp = if_.esp - base_offset;
+  (*(int *)if_.esp) = 0;
+  
+  palloc_free_page (file_name);
+  free(command_temp);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -73,6 +138,7 @@ start_process (void *file_name_)
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+
   NOT_REACHED ();
 }
 
@@ -88,6 +154,10 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  while(1)
+  {
+
+  }
   return -1;
 }
 
