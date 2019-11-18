@@ -20,50 +20,50 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-void parser_commands(char* command, int* argc, char* argv[]);
+void parser_commands (char *command, int *argc, char *argv[]);
 
-void parser_commands(char* command, int* argc, char* argv[])
+void
+parser_commands (char *command, int *argc, char *argv[])
 {
-     char* save = NULL;//use in strtok_r, save previous command
-     argv[*argc] = strtok_r(command, " ", &save);//parser
-    
-     while (argv[*argc]!=NULL)
-     {
-        argv[++(*argc)] = strtok_r(NULL, " ", &save);
-     } 
+  char *save = NULL; //use in strtok_r, save previous command
+  argv[*argc] = strtok_r (command, " ", &save); //parser
+
+  while (argv[*argc] != NULL)
+    {
+      argv[++(*argc)] = strtok_r (NULL, " ", &save);
+    }
 }
 
 /* Starts a new thread running a user program loaded from
-   FILENAME.  The new thread may be scheduled (and may even exit)
-   before process_execute() returns.  Returns the new process's
-   thread id, or TID_ERROR if the thread cannot be created. */
+ FILENAME.  The new thread may be scheduled (and may even exit)
+ before process_execute() returns.  Returns the new process's
+ thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
+   Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-  
+
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    palloc_free_page (fn_copy);
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
-   running. */
+ running. */
 static void
 start_process (void *file_name_)
 {
-  if(file_name_ == NULL)
-    return TID_ERROR;
+  ASSERT(file_name_ != NULL);
 
   char *file_name = file_name_;
   struct intr_frame if_;
@@ -73,88 +73,87 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  
-  char* argv[ARGC_MAX];
+
+  char *argv[ARGC_MAX];
   int argc = 0;
-  parser_commands(file_name, &argc, argv);
+  parser_commands (file_name, &argc, argv);
   bool success = load (argv[0], &if_.eip, &if_.esp);
-  
+
   /* If load failed, quit. */
   if (!success)
-  {
-    palloc_free_page (file_name);
-    thread_exit ();
-  }
+    {
+      palloc_free_page (file_name);
+      thread_exit ();
+    }
 
   /*push the address of parameters*/
-  char * ptr_address[argc];
-  for(int i=argc-1; i>=0; i--)
-  {
-      int str_size = sizeof(argv[i]);
-      if_.esp = if_.esp - str_size;//move the stack pointer
-      memcpy(if_.esp, argv[i], str_size);
-      ptr_address[i]=(char *)if_.esp;
-  } 
-  
-  /*world-align*/
-  while ((int)if_.esp%base_offset != 0) 
-  {
-    if_.esp--;
-  }
-  
+  char *ptr_address[argc];
+  for (int i = argc - 1; i >= 0; i--)
+    {
+      size_t str_size = strlen (argv[i]) + 1;
+      if_.esp = if_.esp - str_size; //move the stack pointer
+      memcpy (if_.esp, argv[i], str_size);
+      ptr_address[i] = (char*) if_.esp;
+    }
+
+  /*word-align*/
+  while ((int) if_.esp % base_offset != 0)
+    {
+      if_.esp--;
+    }
+
   /*push argv address extend*/
   if_.esp = if_.esp - base_offset;
-  (*(int *)if_.esp) = 0;
+  (*(int*) if_.esp) = 0;
 
   /*push the address of address of parameters*/
-  for(int i=argc-1; i>=0; i--)
-  {
-    if_.esp = if_.esp - base_offset;
-    (*(char **)if_.esp) = ptr_address[i]; 
-  }
+  for (int i = argc - 1; i >= 0; i--)
+    {
+      if_.esp = if_.esp - base_offset;
+      (*(char**) if_.esp) = ptr_address[i];
+    }
 
   /*push the address of argv*/
   if_.esp = if_.esp - base_offset;
-  (*(char **)if_.esp) = if_.esp + base_offset;
+  (*(char**) if_.esp) = if_.esp + base_offset;
 
-  /*push the address of argc*/
+  /*push argc*/
   if_.esp = if_.esp - base_offset;
-  (*(int *)if_.esp) = argc;
- 
+  (*(int*) if_.esp) = argc;
+
   /*push 0*/
   if_.esp = if_.esp - base_offset;
-  (*(int *)if_.esp) = 0;
-  
+  (*(int*) if_.esp) = 0;
+
   palloc_free_page (file_name);
-  
 
   /* Start the user process by simulating a return from an
-     interrupt, implemented by intr_exit (in
-     threads/intr-stubs.S).  Because intr_exit takes all of its
-     arguments on the stack in the form of a `struct intr_frame',
-     we just point the stack pointer (%esp) to our stack frame
-     and jump to it. */
+   interrupt, implemented by intr_exit (in
+   threads/intr-stubs.S).  Because intr_exit takes all of its
+   arguments on the stack in the form of a `struct intr_frame',
+   we just point the stack pointer (%esp) to our stack frame
+   and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
 
-  NOT_REACHED ();
+  NOT_REACHED();
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
-   it was terminated by the kernel (i.e. killed due to an
-   exception), returns -1.  If TID is invalid or if it was not a
-   child of the calling process, or if process_wait() has already
-   been successfully called for the given TID, returns -1
-   immediately, without waiting.
+ it was terminated by the kernel (i.e. killed due to an
+ exception), returns -1.  If TID is invalid or if it was not a
+ child of the calling process, or if process_wait() has already
+ been successfully called for the given TID, returns -1
+ immediately, without waiting.
 
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+ This function will be implemented in problem 2-2.  For now, it
+ does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid UNUSED)
 {
-  while(1)
-  {
+  while (1)
+    {
 
-  }
+    }
   return -1;
 }
 
