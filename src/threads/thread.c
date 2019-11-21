@@ -183,6 +183,10 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+  t->parent_tid = thread_current()->tid;
+
+  printf("tid %d parent tid %d\r\n", t->tid, t->parent_tid);
+
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -283,16 +287,21 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
 
+  printf("in thread exit\r\n");
+
 #ifdef USERPROG
   process_exit ();
 #endif
 
+  printf("out of process exit\r\n");
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
+  sema_up(&thread_current()->sema_terminate);
   thread_current ()->status = THREAD_DYING;
+  printf("about to die\r\n");
   schedule ();
   NOT_REACHED ();
 }
@@ -425,7 +434,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 

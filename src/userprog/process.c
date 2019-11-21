@@ -18,6 +18,12 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+struct tid_info {
+  tid_t child;
+  tid_t parent;
+  bool tid_found;
+};
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 void parser_commands (char *command, int *argc, char *argv[]);
@@ -53,8 +59,10 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy);
+
   return tid;
 }
 
@@ -138,6 +146,18 @@ start_process (void *file_name_)
   NOT_REACHED();
 }
 
+static void
+down_sema_terminate (struct thread *t, void *aux)
+{
+  struct tid_info *inf = (struct tid_info*) aux;
+  if ((t->tid == inf->child) && (t->parent_tid == inf->parent))
+    {
+      inf->tid_found = true;
+      sema_init (&t->sema_terminate, 0);
+      sema_down (&t->sema_terminate);
+    }
+}
+
 /* Waits for thread TID to die and returns its exit status.  If
  it was terminated by the kernel (i.e. killed due to an
  exception), returns -1.  If TID is invalid or if it was not a
@@ -148,13 +168,23 @@ start_process (void *file_name_)
  This function will be implemented in problem 2-2.  For now, it
  does nothing. */
 int
-process_wait (tid_t child_tid UNUSED)
+process_wait (tid_t child_tid)
 {
-  while (1)
+  tid_t own_tid = thread_current ()->tid;
+  struct tid_info inf;
+  inf.child = child_tid;
+  inf.parent = own_tid;
+  inf.tid_found = false;
+  enum intr_level lvl = intr_disable();
+  thread_foreach (down_sema_terminate, &inf);
+  intr_set_level(lvl);
+  // TODO return actual status
+  register int exit_status asm("eax");
+  if (inf.tid_found == false)
     {
-
+      exit_status = -1;
     }
-  return -1;
+  return exit_status;
 }
 
 /* Free the current process's resources. */
@@ -197,7 +227,7 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -381,7 +411,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
