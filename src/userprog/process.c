@@ -17,13 +17,15 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
-struct tid_info {
-  tid_t child;
-  tid_t parent;
-  bool tid_found;
+struct proc_inf
+{
+  char *fn;
+  struct process *p;
 };
 
+static struct list process_list;
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 void parser_commands (char *command, int *argc, char *argv[]);
@@ -40,6 +42,12 @@ parser_commands (char *command, int *argc, char *argv[])
     }
 }
 
+void
+process_start (void)
+{
+  list_init (&process_list);
+}
+
 /* Starts a new thread running a user program loaded from
  FILENAME.  The new thread may be scheduled (and may even exit)
  before process_execute() returns.  Returns the new process's
@@ -47,33 +55,62 @@ parser_commands (char *command, int *argc, char *argv[])
 tid_t
 process_execute (const char *file_name)
 {
-  char *fn_copy;
-  tid_t tid;
+  struct proc_inf *p_inf = (struct proc_inf*) malloc (sizeof(struct proc_inf));
 
   /* Make a copy of FILE_NAME.
    Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  p_inf->fn = palloc_get_page (0);
+  if (p_inf->fn == NULL)
+    {
+      free (p_inf);
+      return TID_ERROR;
+    }
+  strlcpy (p_inf->fn, file_name, PGSIZE);
+
+  struct process *p = (struct process*) malloc (sizeof(struct process));
+  p->has_wait = false;
+  p->parent_pid = thread_current ()->tid;
+  sema_init (&p->sema_start, 0);
+  sema_init (&p->sema_terminate, 0);
+  lock_init (&p->lock_modify);
+  list_push_front (&process_list, &p->elem);
+
+  p_inf->p = p;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid_t tid = p->pid = thread_create (file_name, PRI_DEFAULT, start_process, p_inf);
 
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy);
-
+    {
+      palloc_free_page (p_inf->fn);
+      list_remove (&p->elem);
+      free (p);
+    }
+  else
+    {
+      sema_down (&p->sema_start);
+      if (!p->load_successful)
+	{
+	  tid = TID_ERROR;
+	  list_remove (&p->elem);
+	  free (p);
+	}
+    }
+  free (p_inf);
   return tid;
 }
 
 /* A thread function that loads a user process and starts it
  running. */
 static void
-start_process (void *file_name_)
+start_process (void *p_inf_)
 {
-  ASSERT(file_name_ != NULL);
+  ASSERT(p_inf_ != NULL);
 
-  char *file_name = file_name_;
+  struct proc_inf *p_inf = (struct proc_inf *)p_inf_;
+
+  char *file_name = p_inf->fn;
+  ASSERT(file_name != NULL);
   struct intr_frame if_;
 
   /* Initialize interrupt frame and load executable. */
@@ -91,8 +128,13 @@ start_process (void *file_name_)
   if (!success)
     {
       palloc_free_page (file_name);
-      thread_exit ();
+      p_inf->p->load_successful = false;
+      sema_up(&p_inf->p->sema_start);
+      thread_exit (-1);
     }
+
+  // Fix thread's name
+  strlcpy(thread_current()->name, argv[0], sizeof(thread_current()->name));
 
   /*push the address of parameters*/
   char *ptr_address[argc];
@@ -135,6 +177,9 @@ start_process (void *file_name_)
 
   palloc_free_page (file_name);
 
+  p_inf->p->load_successful = true;
+  sema_up(&p_inf->p->sema_start);
+
   /* Start the user process by simulating a return from an
    interrupt, implemented by intr_exit (in
    threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -144,18 +189,6 @@ start_process (void *file_name_)
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
 
   NOT_REACHED();
-}
-
-static void
-down_sema_terminate (struct thread *t, void *aux)
-{
-  struct tid_info *inf = (struct tid_info*) aux;
-  if ((t->tid == inf->child) && (t->parent_tid == inf->parent))
-    {
-      inf->tid_found = true;
-      sema_init (&t->sema_terminate, 0);
-      sema_down (&t->sema_terminate);
-    }
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -170,46 +203,84 @@ down_sema_terminate (struct thread *t, void *aux)
 int
 process_wait (tid_t child_tid)
 {
-  tid_t own_tid = thread_current ()->tid;
-  struct tid_info inf;
-  inf.child = child_tid;
-  inf.parent = own_tid;
-  inf.tid_found = false;
-  enum intr_level lvl = intr_disable();
-  thread_foreach (down_sema_terminate, &inf);
-  intr_set_level(lvl);
-  // TODO return actual status
-  register int exit_status asm("eax");
-  if (inf.tid_found == false)
+  pid_t own_pid = thread_current ()->tid;
+
+  struct process *proc = NULL;
+
+  struct list_elem *e;
+
+  for (e = list_begin (&process_list); e != list_end (&process_list); e =
+      list_next (e))
     {
-      exit_status = -1;
+      struct process *p = list_entry(e, struct process, elem);
+      if ((p->pid == child_tid) && (p->parent_pid == own_pid))
+	{
+	  proc = p;
+	  break;
+	}
     }
-  return exit_status;
+
+  if (proc == NULL)
+    {
+      return -1;
+    }
+
+  lock_acquire (&proc->lock_modify);
+
+  if (proc->has_wait)
+    {
+      lock_release (&proc->lock_modify);
+      return -1;
+    }
+  else
+    {
+      proc->has_wait = true;
+      lock_release (&proc->lock_modify);
+      sema_down (&proc->sema_terminate);
+      return proc->exit_code;
+    }
+  return -1;
 }
 
 /* Free the current process's resources. */
 void
-process_exit (void)
+process_exit (int status)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
   /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
+   to the kernel-only page directory. */
   pd = cur->pagedir;
-  if (pd != NULL) 
+
+  struct list_elem *e;
+
+  for (e = list_begin (&process_list); e != list_end (&process_list); e =
+      list_next (e))
+    {
+      struct process *p = list_entry(e, struct process, elem);
+      if (p->pid == cur->tid)
+	{
+	  p->exit_code = status;
+	  sema_up(&p->sema_terminate);
+	  break;
+	}
+    }
+
+  if (pd != NULL)
     {
       /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
+       cur->pagedir to NULL before switching page directories,
+       so that a timer interrupt can't switch back to the
+       process page directory.  We must activate the base page
+       directory before destroying the process's page
+       directory, or our active page directory will be one
+       that's been freed (and cleared). */
       cur->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
 }
 
 /* Sets up the CPU for running user code in the current

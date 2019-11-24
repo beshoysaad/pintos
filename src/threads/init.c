@@ -120,6 +120,8 @@ kernel_main (void)
   serial_init_queue ();
   timer_calibrate ();
 
+  process_start();
+
 #ifdef FILESYS
   /* Initialize file system. */
   ide_init ();
@@ -134,7 +136,7 @@ kernel_main (void)
 
   /* Finish up. */
   shutdown ();
-  thread_exit ();
+  thread_exit (0);
 }
 
 /* Clear the "BSS", a segment that should be initialized to

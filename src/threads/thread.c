@@ -183,10 +183,6 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-  t->parent_tid = thread_current()->tid;
-
-  printf("tid %d parent tid %d\r\n", t->tid, t->parent_tid);
-
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -281,29 +277,25 @@ thread_tid (void)
 }
 
 /* Deschedules the current thread and destroys it.  Never
-   returns to the caller. */
+ returns to the caller. */
 void
-thread_exit (void) 
+thread_exit (int status)
 {
-  ASSERT (!intr_context ());
-
-  printf("in thread exit\r\n");
+  ASSERT(!intr_context ());
 
 #ifdef USERPROG
-  process_exit ();
+  process_exit (status);
 #endif
 
-  printf("out of process exit\r\n");
   /* Remove thread from all threads list, set our status to dying,
-     and schedule another process.  That process will destroy us
-     when it calls thread_schedule_tail(). */
+   and schedule another process.  That process will destroy us
+   when it calls thread_schedule_tail(). */
+  printf ("%s: exit(%d)\n", thread_current ()->name, status);
   intr_disable ();
-  list_remove (&thread_current()->allelem);
-  sema_up(&thread_current()->sema_terminate);
+  list_remove (&thread_current ()->allelem);
   thread_current ()->status = THREAD_DYING;
-  printf("about to die\r\n");
   schedule ();
-  NOT_REACHED ();
+  NOT_REACHED();
 }
 
 /* Yields the CPU.  The current thread is not put to sleep and
@@ -432,7 +424,7 @@ kernel_thread (thread_func *function, void *aux)
 
   intr_enable ();       /* The scheduler runs with interrupts off. */
   function (aux);       /* Execute the thread function. */
-  thread_exit ();       /* If function() returns, kill the thread. */
+  thread_exit (0);       /* If function() returns, kill the thread. */
 }
 
 /* Returns the running thread. */

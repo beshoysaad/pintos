@@ -20,7 +20,6 @@ pagedir_create (void)
   if (pd != NULL)
     {
       memcpy (pd, init_page_dir, PGSIZE);
-      printf ("created page dir %p\r\n", pd);
     }
   return pd;
 }
