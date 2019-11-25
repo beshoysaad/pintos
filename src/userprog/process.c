@@ -73,6 +73,9 @@ process_execute (const char *file_name)
   sema_init (&p->sema_start, 0);
   sema_init (&p->sema_terminate, 0);
   lock_init (&p->lock_modify);
+  p->list_file_desc = (struct list *)malloc(sizeof(struct list));
+  list_init (p->list_file_desc);
+  p->fd_counter = 2;
   list_push_front (&process_list, &p->elem);
 
   p_inf->p = p;
@@ -92,8 +95,6 @@ process_execute (const char *file_name)
       if (!p->load_successful)
 	{
 	  tid = TID_ERROR;
-	  list_remove (&p->elem);
-	  free (p);
 	}
     }
   free (p_inf);
@@ -177,6 +178,7 @@ start_process (void *p_inf_)
 
   palloc_free_page (file_name);
 
+  thread_current()->p = p_inf->p;
   p_inf->p->load_successful = true;
   sema_up(&p_inf->p->sema_start);
 
@@ -246,26 +248,25 @@ process_wait (tid_t child_tid)
 void
 process_exit (int status)
 {
-  struct thread *cur = thread_current ();
+  struct thread *cur_thread = thread_current ();
+  struct process *cur_process = cur_thread->p;
   uint32_t *pd;
+
+  while (!list_empty (cur_process->list_file_desc))
+    {
+      struct list_elem *e = list_pop_front (cur_process->list_file_desc);
+      free(list_entry(e, struct file_desc, elem));
+    }
+
+  free (cur_process->list_file_desc);
+  cur_process->exit_code = status;
+  sema_up (&cur_process->sema_terminate);
+  /* TODO: free and remove from list all terminated children.
+   * If parent has been terminated, free and remove this as well */
 
   /* Destroy the current process's page directory and switch back
    to the kernel-only page directory. */
-  pd = cur->pagedir;
-
-  struct list_elem *e;
-
-  for (e = list_begin (&process_list); e != list_end (&process_list); e =
-      list_next (e))
-    {
-      struct process *p = list_entry(e, struct process, elem);
-      if (p->pid == cur->tid)
-	{
-	  p->exit_code = status;
-	  sema_up(&p->sema_terminate);
-	  break;
-	}
-    }
+  pd = cur_thread->pagedir;
 
   if (pd != NULL)
     {
@@ -276,11 +277,10 @@ process_exit (int status)
        directory before destroying the process's page
        directory, or our active page directory will be one
        that's been freed (and cleared). */
-      cur->pagedir = NULL;
+      cur_thread->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-
 }
 
 /* Sets up the CPU for running user code in the current

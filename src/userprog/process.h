@@ -3,9 +3,18 @@
 
 #include "threads/thread.h"
 #include "lib/user/syscall.h"
+#include "filesys/off_t.h"
+#include "filesys/file.h"
 
 #define ARGC_MAX 128
 #define base_offset 4
+
+struct file_desc {
+  int fd;
+  struct file *f;
+  off_t pos;
+  struct list_elem elem;
+};
 
 struct process {
   pid_t pid;
@@ -17,6 +26,8 @@ struct process {
   bool has_wait;
   int exit_code;
   bool load_successful;
+  struct list *list_file_desc;
+  int fd_counter;
 };
 
 tid_t process_execute (const char *file_name);
