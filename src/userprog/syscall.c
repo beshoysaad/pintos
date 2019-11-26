@@ -232,6 +232,7 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    f->eax = file_read_at (fl->f, buffer, size, fl->pos);
+		    fl->pos += f->eax;
 		    return;
 		  }
 	      }
@@ -275,6 +276,7 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    f->eax = file_write_at (fl->f, buffer, size, fl->pos);
+		    fl->pos += f->eax;
 		    return;
 		  }
 	      }

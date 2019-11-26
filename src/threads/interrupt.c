@@ -1,3 +1,5 @@
+#define NDEBUG
+
 #include "threads/interrupt.h"
 #include <debug.h>
 #include <inttypes.h>
@@ -408,7 +410,7 @@ unexpected_interrupt (const struct intr_frame *f)
 
 /* Dumps interrupt frame F to the console, for debugging. */
 void
-intr_dump_frame (const struct intr_frame *f) 
+intr_dump_frame (const struct intr_frame *f UNUSED)
 {
   uint32_t cr2;
 
@@ -419,14 +421,14 @@ intr_dump_frame (const struct intr_frame *f)
      (#PF)". */
   asm ("movl %%cr2, %0" : "=r" (cr2));
 
-  printf ("Interrupt %#04x (%s) at eip=%p\n",
+  DEBUG_PRINT ("Interrupt %#04x (%s) at eip=%p\n",
           f->vec_no, intr_names[f->vec_no], f->eip);
-  printf (" cr2=%08"PRIx32" error=%08"PRIx32"\n", cr2, f->error_code);
-  printf (" eax=%08"PRIx32" ebx=%08"PRIx32" ecx=%08"PRIx32" edx=%08"PRIx32"\n",
+  DEBUG_PRINT (" cr2=%08"PRIx32" error=%08"PRIx32"\n", cr2, f->error_code);
+  DEBUG_PRINT (" eax=%08"PRIx32" ebx=%08"PRIx32" ecx=%08"PRIx32" edx=%08"PRIx32"\n",
           f->eax, f->ebx, f->ecx, f->edx);
-  printf (" esi=%08"PRIx32" edi=%08"PRIx32" esp=%08"PRIx32" ebp=%08"PRIx32"\n",
+  DEBUG_PRINT (" esi=%08"PRIx32" edi=%08"PRIx32" esp=%08"PRIx32" ebp=%08"PRIx32"\n",
           f->esi, f->edi, (uint32_t) f->esp, f->ebp);
-  printf (" cs=%04"PRIx16" ds=%04"PRIx16" es=%04"PRIx16" ss=%04"PRIx16"\n",
+  DEBUG_PRINT (" cs=%04"PRIx16" ds=%04"PRIx16" es=%04"PRIx16" ss=%04"PRIx16"\n",
           f->cs, f->ds, f->es, f->ss);
 }
 

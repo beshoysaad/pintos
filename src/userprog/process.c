@@ -123,6 +123,9 @@ start_process (void *p_inf_)
   char *argv[ARGC_MAX];
   int argc = 0;
   parser_commands (file_name, &argc, argv);
+
+  thread_current()->p = p_inf->p;
+
   bool success = load (argv[0], &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
@@ -178,7 +181,6 @@ start_process (void *p_inf_)
 
   palloc_free_page (file_name);
 
-  thread_current()->p = p_inf->p;
   p_inf->p->load_successful = true;
   sema_up(&p_inf->p->sema_start);
 
@@ -252,6 +254,9 @@ process_exit (int status)
   struct process *cur_process = cur_thread->p;
   uint32_t *pd;
 
+  ASSERT(cur_process != NULL);
+  ASSERT(cur_process->list_file_desc != NULL);
+
   while (!list_empty (cur_process->list_file_desc))
     {
       struct list_elem *e = list_pop_front (cur_process->list_file_desc);
@@ -260,6 +265,7 @@ process_exit (int status)
 
   free (cur_process->list_file_desc);
   cur_process->exit_code = status;
+  file_close(cur_process->executable);
   sema_up (&cur_process->sema_terminate);
   /* TODO: free and remove from list all terminated children.
    * If parent has been terminated, free and remove this as well */
@@ -475,11 +481,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
+  t->p->executable = file;
+  file_deny_write(file);
+
   success = true;
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  if (!success)
+    {
+      file_close (file);
+    }
   return success;
 }
 

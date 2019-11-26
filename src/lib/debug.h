@@ -33,7 +33,9 @@ void debug_backtrace_all (void);
                 PANIC ("assertion `%s' failed.", #CONDITION);   \
         }
 #define NOT_REACHED() PANIC ("executed an unreachable statement");
+#define DEBUG_PRINT(...)	printf(__VA_ARGS__)
 #else
 #define ASSERT(CONDITION) ((void) 0)
 #define NOT_REACHED() for (;;)
+#define DEBUG_PRINT(...)
 #endif /* lib/debug.h */

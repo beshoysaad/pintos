@@ -28,6 +28,7 @@ struct process {
   bool load_successful;
   struct list *list_file_desc;
   int fd_counter;
+  struct file* executable;
 };
 
 tid_t process_execute (const char *file_name);
