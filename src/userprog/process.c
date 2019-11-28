@@ -276,12 +276,12 @@ process_exit (int status)
 
   /* Free and remove from list all terminated children.
    * If parent has been terminated, free and remove this as well */
-  struct list_elem *e;
+
   bool free_this_process = false;
   bool parent_found = false;
 
-  for (e = list_begin (&process_list); e != list_end (&process_list); e =
-      list_next (e))
+  struct list_elem *e = list_begin (&process_list);
+  while (e != list_end (&process_list) && !list_empty (&process_list))
     {
       struct process *p = list_entry(e, struct process, elem);
       if (p->pid == cur_process->parent_pid)
@@ -294,11 +294,12 @@ process_exit (int status)
 	}
       if ((p->parent_pid == cur_process->pid) && (p->terminated))
 	{
-	  struct list_elem *f = e;
-	  e = list_next (e);
-	  list_remove (f);
+	  e = list_remove (e);
 	  free (p);
+	  continue;
 	}
+      e = list_next(e);
+
     }
 
   printf ("%s: exit(%d)\n", thread_current ()->name, status);
