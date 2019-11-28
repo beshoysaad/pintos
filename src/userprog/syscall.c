@@ -20,7 +20,7 @@ syscall_handler (struct intr_frame*);
 void
 syscall_init (void)
 {
-  lock_init(&lock_file_sys);
+  lock_init (&lock_file_sys);
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
@@ -42,9 +42,12 @@ read_user_mem (uint32_t *pd, const void *upage, size_t sz)
     {
       return NULL;
     }
-  if (pagedir_get_page (pd, upage + sz - 1) == NULL)
+  if ((sz > 1) && (pg_no (upage) != pg_no (upage + sz - 1)))
     {
-      return NULL;
+      if (pagedir_get_page (pd, upage + sz - 1) == NULL)
+	{
+	  return NULL;
+	}
     }
   return pagedir_get_page (pd, upage);
 }
@@ -95,7 +98,9 @@ syscall_handler (struct intr_frame *f)
 	    terminate_process (f, -1);
 	    return;
 	  }
+	lock_acquire (&lock_file_sys);
 	f->eax = process_execute (cmd_line);
+	lock_release (&lock_file_sys);
 	break;
       }
     case SYS_WAIT:
@@ -123,9 +128,9 @@ syscall_handler (struct intr_frame *f)
 	  }
 	sp++;
 	unsigned size = *(unsigned*) sp;
-	lock_acquire(&lock_file_sys);
+	lock_acquire (&lock_file_sys);
 	f->eax = filesys_create (file, size);
-	lock_release(&lock_file_sys);
+	lock_release (&lock_file_sys);
 	break;
       }
     case SYS_REMOVE:
@@ -144,9 +149,9 @@ syscall_handler (struct intr_frame *f)
 	    terminate_process (f, -1);
 	    return;
 	  }
-	lock_acquire(&lock_file_sys);
+	lock_acquire (&lock_file_sys);
 	f->eax = filesys_remove (file);
-	lock_release(&lock_file_sys);
+	lock_release (&lock_file_sys);
 	break;
       }
     case SYS_OPEN:
@@ -174,6 +179,11 @@ syscall_handler (struct intr_frame *f)
 	  {
 	    struct file_desc *fd = (struct file_desc*) malloc (
 		sizeof(struct file_desc));
+	    if (fd == NULL)
+	      {
+		f->eax = -1;
+		return;
+	      }
 	    fd->f = fl;
 	    fd->pos = 0;
 	    fd->fd = cur_proc->fd_counter++;
@@ -238,9 +248,9 @@ syscall_handler (struct intr_frame *f)
 		struct file_desc *fl = list_entry(e, struct file_desc, elem);
 		if (fl->fd == fd)
 		  {
-		    lock_acquire(&lock_file_sys);
+		    lock_acquire (&lock_file_sys);
 		    f->eax = file_read_at (fl->f, buffer, size, fl->pos);
-		    lock_release(&lock_file_sys);
+		    lock_release (&lock_file_sys);
 		    fl->pos += f->eax;
 		    return;
 		  }
@@ -284,9 +294,9 @@ syscall_handler (struct intr_frame *f)
 		struct file_desc *fl = list_entry(e, struct file_desc, elem);
 		if (fl->fd == fd)
 		  {
-		    lock_acquire(&lock_file_sys);
+		    lock_acquire (&lock_file_sys);
 		    f->eax = file_write_at (fl->f, buffer, size, fl->pos);
-		    lock_release(&lock_file_sys);
+		    lock_release (&lock_file_sys);
 		    fl->pos += f->eax;
 		    return;
 		  }

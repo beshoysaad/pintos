@@ -1,4 +1,4 @@
-#define NDEBUG
+//#define NDEBUG
 
 #include "userprog/exception.h"
 #include <inttypes.h>

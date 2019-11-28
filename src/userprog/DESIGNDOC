@@ -34,6 +34,8 @@ Xuwen  Yao  <s8xuyaoo@stud.uni-saarland.de> 2576017
 char *argv[ARGC_MAX]; //array stored arguments
 int argc = 0;         //the number of arguments
 
+---- ALGORITHMS ----
+
 >> A2: Briefly describe how you implemented argument parsing.  How do
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
@@ -70,22 +72,26 @@ passing user arguments in kernel directly.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct lock lock_file_sys;			 //global lock to access file system
+
 /*variable used in system call*/
 struct process {
   pid_t pid;                         //process id
   pid_t parent_pid;                  //parent's process id
-  struct list_elem elem;             //list element
+  struct list_elem elem;             //list element to use in process list
   struct semaphore sema_start;       //semaphore used in process start, ensuring process_execute finishes before returning to syscall 
-  struct semaphore sema_terminate;   //semaphore used in termination
-  struct lock lock_modify;           //lock used in process_wait
-  bool has_wait;                     //flag to record whether the child has been waited
+  struct semaphore sema_terminate;   //semaphore used in termination, so that waiting parent knows when child has exited
+  struct lock lock_modify;           //lock used in process_wait to modify the flag has_wait to prevent races
+  bool has_wait;                     //flag to record whether the child has been waited to prevent parent from waiting more than once
   int exit_code;                     //process exit state
-  bool load_successful;              //whether to load process 
-  struct list *list_file_desc;       //list of file descriptors
-  int fd_counter;                    //the number of file within a process
-  struct file* executable;           //
+  bool load_successful;              //whether loading the process executable file has been successful. used to inform exec() return value
+  struct list *list_file_desc;       //list of file descriptors for this process
+  int fd_counter;                    //used to get new file descriptors for this process by incrementing whenever a file is opened
+  struct file* executable;           //pointer to the struct file of the executable of the process. needed to close the file after the process exits.
+  bool terminated;					 //has this process exited yet? used to decide when to free the struct and remove it from the list
 };
 
+//this struct is used in list of file descriptors for each process
 struct file_desc {
   int fd;                            //file index, each file in a process is different
   struct file *f;                    //file pointer 
@@ -93,6 +99,7 @@ struct file_desc {
   struct list_elem elem;             //element of file list
 };
 
+//this struct is passed to thread_create as an auxiliary argument for start_process because we need a pointer to the process struct
 struct proc_inf
 {
   char *fn;                         //arguments
@@ -107,13 +114,26 @@ File descriptors unique within a single process. Every process has it own proces
 with a file list. The element of this file list is file_descriptor defined by ourself. When
 we open a file, we just create a new file_descriptor and put it into the process file list.   
 
+---- ALGORITHMS ----
+
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
 
-At first, we get the address of read or write buffer, the size to read or write, and the file 
-fd (0 is stdin and 1 is stdout and other value is for different files). According to file fd,
-we find the file in the process file list. If we can find the file in file list, we just write
-or read in that file. Otherwise, we return a fail.
+We developed a function read_user_mem that takes the page directory, user address, and size to
+check. It either returns the kernal virtual address or null. If the page directory is null, 
+the passed address is not a user address, or the passed address + offset size is not a user 
+address, we return null. Then we use pagedir_get_page to check whether the passed address + 
+offset is mapped. If all those checks pass, then we return the kernel address obtained by calling
+pagedir_get_page and passing the user address to translate. If the return from the above function 
+is null, we terminate the user process as we have been passed an invalid address.
+
+So the first step is to obtain the syscall number. We do this by passing the stack pointer to 
+read_user_mem and specifying the size as 12 bytes. This is to make sure that we can read at least 
+three arguments (the maximum number of args in available syscalls) safely from the user stack.
+
+After getting the syscall number, we switch on it and perform the appropriate operations to 
+execute the required functionality. If any of the passed arguments to the syscall is a pointer 
+(or a buffer) we'll need to again call read_user_mem to make sure it is valid.
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
@@ -122,27 +142,28 @@ or read in that file. Otherwise, we return a fail.
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
-The least possible number of inspections of page table is one and the greatest 
-number is two. Because the full page of data can span two pages. Therefore, we 
-need to check whether the beginning and the end of the data is mapped to one page.
+The function we designed to do the validity checks (read_user_mem) always calls pagedir_get_page
+twice because we treat any user address as a buffer that has a size, so we check that both the 
+beginning and end of the buffer are valid addresses. This number doesn't change depending on the 
+size of the buffer. An improvement could be made for reading 1 byte, where only 1 call to pagedir_get_page
+suffices, but we did not add this optimization to our code. Another improvement can be made by checking
+if the start and end addresses are both in the same page, then also only one call suffices, but again,
+we didn't make this optimization. We can reduce the number of calls to one in all cases by not checking 
+the end of the buffer using pagedir_get_page and letting the MMU tell us if there's a page fault. We opted
+to use the simpler approach of using our code rather than the MMU to check memory validity.
 
-Even 2 bytes of data, they still can span two pages. One byte data is in one page and the 
-other byte data is in other page. 
-
-The improvement is that check this in the page_fault exception handler. This is detected by
-hardware MMU. We don't check in software anymore
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
 
-At first, we traverse the process list to find our child process. 
-If we can find this, call a lock and check whether this child process
-has been waited. If it has been waited, parent process don't wait the termination
-of this children and return -1. Otherwise, we set the flag that this child has been
-waited and release the lock. And then, we set a semaphore down. Until the process exit,
-it would call semaphore up so that we can return to the parent process. 
+First we traverse the process list to find our child process. 
+If we do, we acquire a lock and check whether this child process
+has been waited. If it has, then the parent process doesn't wait for the termination
+of this child and returns -1. Otherwise, we set the flag that this child has been
+waited, release the lock, and down the semaphore. When the child process exits,
+it ups the semaphore so that we can return to the parent process.
 
->> B6: Any access to user pUntitled Documentrogram memory at a user-specified address
+>> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
 >> process to be terminated.  System calls are fraught with such
 >> accesses, e.g. a "write" system call requires reading the system
@@ -156,12 +177,20 @@ it would call semaphore up so that we can return to the parent process.
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
-We would check whether the address is vaild to get the parameters we need.
-If we cannot get parameters correctly, we would return the fault status and
-call process_exit function, which would free all temporarily allocated resources.
-For example, the file fd is stdout if we want to read from a file, which would cause 
-some errors.  We don't do the next step and just call process_exit to return. And set
-eax stack as -1.
+We designed the function read_user_mem to handle memory validity checking for us.
+We call this function to validate stack pointer and arguments, as well as to validate
+user-provided pointers or buffers. Other than that, we have chosen a fail-fast 
+error checking paradigm, where we try to return -1 or terminate the offending user
+process as soon as we detect an error. Also, we delay allocating memory and acquiring 
+locks as much as we can to make sure we already have valid data first.
+
+An example would be the open syscall. The first argument is a buffer containing the file
+name to open. We use read_user_mem twice to check that the entire string buffer is valid
+(because we can't use strlen on the user virtual address). We return immediately if any of
+those checks fail. Then we try to open the file, returning immediately if open failed.
+If we have reached this point, then we know we have valid data that we can use, then we 
+allocate the file descriptor, add it to the list, and return the file descriptor number 
+in eax.
 
 ---- SYNCHRONIZATION ----
 
@@ -170,12 +199,13 @@ eax stack as -1.
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
-Our "exec" system call function call process_execute function. In process_execute,
+Our "exec" system call calls process_execute function. In process_execute,
 we create a new thread for arguments passing and starting new user program. We set 
-a semaphore down before scheduling the new thread. And we set a semaphore up after
-the new thread finishing its task. And then, the process_execute function could return
-the success/failure status to syscall. So this method ensures that the new executable 
-has completed loading.
+a semaphore down before scheduling the new thread, and we set the semaphore up after
+the new thread finishing its task (which is loading the user process) and indicating 
+whether loading the executable has succeeded in the load_successful flag in the process
+struct. process_execute then returns the success/failure status to the syscall. This method
+ensures that the new executable has completed loading.
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -184,7 +214,19 @@ has completed loading.
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
+Every process struct has a member semaphore that is initialized to 0 and upped only when 
+that process exits. A waiting process (P in this case) tries to down that semaphore, so
+it gets blocked until the child being waited on (C in this case) terminates and thus 
+ups the semaphore. Even after C has exited, it is not freed or removed from the list of 
+processes until its parent has exited. This ensures that a parent process can always wait 
+for a child process even if that child has exited.
 
+We ensure that all resources are properly freed by looping through the process list when
+any process exits and checking whether the exiting process is the parent of any child that 
+has already exited (as marked by a special flag in the process struct). If that's the case,
+then that child is freed and removed from the process list. Also, if the process being terminated
+has a parent that has already exited (or it doesn't have a parent in the list), it gets freed
+and removed from the list as well.
 
 
 ---- RATIONALE ----
@@ -192,23 +234,24 @@ has completed loading.
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
-We check the user provided pointer by three steps:
-1) whether the page directory is NULL 2) whether the provided pointer is user virtual address
-3) whether the virtual address is already mapped.
-
-These steps is to make sure no exception fault occuring.
+We chose the easier path to make the checks in the code and not rely on the MMU to trigger a page
+fault when there's invalid access. The reason was code readability and ease of implementation and 
+maintenance. In addition, we didn't notice any perceptible lagginess or slow-downs when executing 
+any of the user programs or tests.
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
 We use a list to store file descriptors. The advantage is that it's easy 
 and efficient to maintain and find the descriptors for different files. 
-The disadvantages is that it's need some memory because every process
-has a file list.
+The disadvantages are that it consumes memory because every process has a file list,
+and that accessing the list has a linear complexity which is not optimal compared to
+e.g. a hash table.
 
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
+We didn't change the default pid to tid mapping.
 
 
 			   SURVEY QUESTIONS

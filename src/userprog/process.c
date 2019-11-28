@@ -56,6 +56,10 @@ tid_t
 process_execute (const char *file_name)
 {
   struct proc_inf *p_inf = (struct proc_inf*) malloc (sizeof(struct proc_inf));
+  if (p_inf == NULL)
+    {
+      return TID_ERROR;
+    }
 
   /* Make a copy of FILE_NAME.
    Otherwise there's a race between the caller and load(). */
@@ -68,6 +72,12 @@ process_execute (const char *file_name)
   strlcpy (p_inf->fn, file_name, PGSIZE);
 
   struct process *p = (struct process*) malloc (sizeof(struct process));
+  if (p == NULL)
+    {
+      palloc_free_page (p_inf->fn);
+      free (p_inf);
+      return TID_ERROR;
+    }
   p->has_wait = false;
   p->terminated = false;
   p->parent_pid = thread_current ()->tid;
@@ -77,6 +87,13 @@ process_execute (const char *file_name)
   sema_init (&p->sema_terminate, 0);
   lock_init (&p->lock_modify);
   p->list_file_desc = (struct list*) malloc (sizeof(struct list));
+  if (p->list_file_desc == NULL)
+    {
+      free (p);
+      palloc_free_page (p_inf->fn);
+      free (p_inf);
+      return TID_ERROR;
+    }
   list_init (p->list_file_desc);
   list_push_front (&process_list, &p->elem);
 
