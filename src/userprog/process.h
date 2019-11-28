@@ -29,6 +29,7 @@ struct process {
   struct list *list_file_desc;
   int fd_counter;
   struct file* executable;
+  bool terminated;
 };
 
 tid_t process_execute (const char *file_name);

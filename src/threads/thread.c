@@ -290,7 +290,6 @@ thread_exit (int status)
   /* Remove thread from all threads list, set our status to dying,
    and schedule another process.  That process will destroy us
    when it calls thread_schedule_tail(). */
-  printf ("%s: exit(%d)\n", thread_current ()->name, status);
   intr_disable ();
   list_remove (&thread_current ()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -377,7 +376,7 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -581,7 +580,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

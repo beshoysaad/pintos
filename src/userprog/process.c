@@ -69,19 +69,22 @@ process_execute (const char *file_name)
 
   struct process *p = (struct process*) malloc (sizeof(struct process));
   p->has_wait = false;
+  p->terminated = false;
   p->parent_pid = thread_current ()->tid;
+  p->fd_counter = 2;
+  p->executable = NULL;
   sema_init (&p->sema_start, 0);
   sema_init (&p->sema_terminate, 0);
   lock_init (&p->lock_modify);
-  p->list_file_desc = (struct list *)malloc(sizeof(struct list));
+  p->list_file_desc = (struct list*) malloc (sizeof(struct list));
   list_init (p->list_file_desc);
-  p->fd_counter = 2;
   list_push_front (&process_list, &p->elem);
 
   p_inf->p = p;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid_t tid = p->pid = thread_create (file_name, PRI_DEFAULT, start_process, p_inf);
+  tid_t tid = p->pid = thread_create (file_name, PRI_DEFAULT, start_process,
+				      p_inf);
 
   if (tid == TID_ERROR)
     {
@@ -260,15 +263,53 @@ process_exit (int status)
   while (!list_empty (cur_process->list_file_desc))
     {
       struct list_elem *e = list_pop_front (cur_process->list_file_desc);
-      free(list_entry(e, struct file_desc, elem));
+      free (list_entry(e, struct file_desc, elem));
     }
 
   free (cur_process->list_file_desc);
+  cur_process->terminated = true;
   cur_process->exit_code = status;
-  file_close(cur_process->executable);
-  sema_up (&cur_process->sema_terminate);
-  /* TODO: free and remove from list all terminated children.
+  if (cur_process->executable != NULL)
+    {
+      file_close (cur_process->executable);
+    }
+
+  /* Free and remove from list all terminated children.
    * If parent has been terminated, free and remove this as well */
+  struct list_elem *e;
+  bool free_this_process = false;
+  bool parent_found = false;
+
+  for (e = list_begin (&process_list); e != list_end (&process_list); e =
+      list_next (e))
+    {
+      struct process *p = list_entry(e, struct process, elem);
+      if (p->pid == cur_process->parent_pid)
+	{
+	  parent_found = true;
+	  if (p->terminated)
+	    {
+	      free_this_process = true;
+	    }
+	}
+      if ((p->parent_pid == cur_process->pid) && (p->terminated))
+	{
+	  struct list_elem *f = e;
+	  e = list_next (e);
+	  list_remove (f);
+	  free (p);
+	}
+    }
+
+  printf ("%s: exit(%d)\n", thread_current ()->name, status);
+
+  sema_up (&cur_process->sema_terminate);
+
+  if (free_this_process || !parent_found)
+    {
+      list_remove (&cur_process->elem);
+      free (cur_process);
+    }
 
   /* Destroy the current process's page directory and switch back
    to the kernel-only page directory. */
