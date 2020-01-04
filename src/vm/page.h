@@ -20,12 +20,12 @@ bool
 page_table_init (struct hash **pages);
 
 void
-page_table_destroy (struct hash *pages, struct lock *l);
+page_table_destroy (void);
 
 void*
-page_add (struct hash *pages, struct lock *l, void *upage, enum page_type type);
+page_add (void *upage, enum page_type type);
 
 void
-page_remove (struct hash *pages, struct lock *l, void *upage);
+page_remove (void *upage);
 
 #endif /* SRC_VM_PAGE_H_ */

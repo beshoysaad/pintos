@@ -10,6 +10,7 @@
 #include "frame.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
+#include "userprog/process.h"
 #include "page.h"
 
 struct page
@@ -51,47 +52,48 @@ bool
 page_table_init (struct hash **pages)
 {
   *pages = (struct hash*) malloc (sizeof(struct hash));
-  if (*pages == NULL) {
+  if (*pages == NULL)
+    {
       return false;
-  }
+    }
   return hash_init (*pages, page_hash, page_less, NULL);
 }
 
 void
-page_table_destroy (struct hash *pages, struct lock *l)
+page_table_destroy (void)
 {
-  ASSERT(pages != NULL);
-  ASSERT(l != NULL);
-  lock_acquire (l);
-  hash_destroy (pages, page_deallocate);
-  lock_release (l);
+  struct process *proc = thread_current ()->p;
+  lock_acquire (&proc->page_table_lock);
+  hash_destroy (proc->pages, page_deallocate);
+  lock_release (&proc->page_table_lock);
 }
 
 void*
-page_add (struct hash *pages, struct lock *l, void *upage, enum page_type type)
+page_add (void *upage, enum page_type type)
 {
-  ASSERT(pages != NULL);
+  struct process *proc = thread_current ()->p;
   struct page *pg = (struct page*) malloc (sizeof(struct page));
   ASSERT(pg != NULL);
   pg->kernel_address = frame_alloc (upage, type == PAGE_TYPE_ZERO);
   ASSERT(pg->kernel_address != NULL);
   pg->user_address = upage;
   pg->type = type;
-  lock_acquire (l);
-  ASSERT(hash_insert(pages, &pg->h_elem) == NULL);
-  lock_release (l);
+  lock_acquire (&proc->page_table_lock);
+  ASSERT(hash_insert(proc->pages, &pg->h_elem) == NULL);
+  lock_release (&proc->page_table_lock);
   return pg->kernel_address;
 }
 
 void
-page_remove (struct hash *pages, struct lock *l, void *upage)
+page_remove (void *upage)
 {
+  struct process *proc = thread_current ()->p;
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
-  lock_acquire (l);
-  e = hash_delete (pages, &p.h_elem);
-  lock_release (l);
+  lock_acquire (&proc->page_table_lock);
+  e = hash_delete (proc->pages, &p.h_elem);
+  lock_release (&proc->page_table_lock);
   if (e != NULL)
     {
       struct page *g = hash_entry(e, struct page, h_elem);

@@ -333,7 +333,7 @@ process_exit (int status)
     }
 
   // Free this process's page table
-  page_table_destroy(cur_process->pages, &cur_process->page_table_lock);
+  page_table_destroy();
 
   printf ("%s: exit(%d)\n", thread_current ()->name, status);
 
@@ -641,8 +641,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  struct process *curr_proc = thread_current()->p;
-
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -653,7 +651,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      uint8_t *kpage = page_add(curr_proc->pages, &curr_proc->page_table_lock, upage, PAGE_TYPE_FILE);
+      uint8_t *kpage = page_add(upage, PAGE_TYPE_FILE);
       if (kpage == NULL)
         return false;
 
@@ -662,18 +660,19 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
           palloc_free_page (kpage);
-          return false; 
+          return false;
         }
       memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
       /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable)) 
         {
-	  page_remove(curr_proc->pages, &curr_proc->page_table_lock, upage);
+	  page_remove(upage);
           return false; 
         }
 
       // TODO set page as not present
+//      pagedir_clear_page(thread_current()->pagedir, upage);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -693,9 +692,7 @@ setup_stack (void **esp)
 
   upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
 
-  struct process *p = thread_current ()->p;
-
-  kpage = page_add (p->pages, &p->page_table_lock, upage, PAGE_TYPE_ZERO);
+  kpage = page_add (upage, PAGE_TYPE_ZERO);
 
   if (kpage != NULL)
     {
@@ -703,7 +700,7 @@ setup_stack (void **esp)
       if (success)
 	*esp = PHYS_BASE;
       else
-	page_remove(p->pages, &p->page_table_lock, upage);
+	page_remove(upage);
     }
   return success;
 }
