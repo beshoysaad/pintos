@@ -18,6 +18,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "vm/frame.h"
+#include "vm/page.h"
 
 struct proc_inf
 {
@@ -96,6 +98,17 @@ process_execute (const char *file_name)
     }
   list_init (p->list_file_desc);
   list_push_front (&process_list, &p->elem);
+
+  // Init page table
+  lock_init (&p->page_table_lock);
+  if (!page_table_init (&p->pages))
+    {
+      free (p->list_file_desc);
+      free (p);
+      palloc_free_page (p_inf->fn);
+      free (p_inf);
+      return TID_ERROR;
+    }
 
   p_inf->p = p;
 
@@ -318,6 +331,9 @@ process_exit (int status)
       e = list_next(e);
 
     }
+
+  // Free this process's page table
+  page_table_destroy(cur_process->pages, &cur_process->page_table_lock);
 
   printf ("%s: exit(%d)\n", thread_current ()->name, status);
 
@@ -625,6 +641,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
+  struct process *curr_proc = thread_current()->p;
+
   file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -635,11 +653,12 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
+      uint8_t *kpage = page_add(curr_proc->pages, &curr_proc->page_table_lock, upage, PAGE_TYPE_FILE);
       if (kpage == NULL)
         return false;
 
-      /* Load this page. */
+      /* Load this page.
+       * TODO: delay until page fault */
       if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
         {
           palloc_free_page (kpage);
@@ -650,9 +669,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Add the page to the process's address space. */
       if (!install_page (upage, kpage, writable)) 
         {
-          palloc_free_page (kpage);
+	  page_remove(curr_proc->pages, &curr_proc->page_table_lock, upage);
           return false; 
         }
+
+      // TODO set page as not present
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -663,21 +684,26 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
-   user virtual memory. */
+ user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (void **esp)
 {
-  uint8_t *kpage;
+  uint8_t *kpage, *upage;
   bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
+  upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
+
+  struct process *p = thread_current ()->p;
+
+  kpage = page_add (p->pages, &p->page_table_lock, upage, PAGE_TYPE_ZERO);
+
+  if (kpage != NULL)
     {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      success = install_page (upage, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+	*esp = PHYS_BASE;
       else
-        palloc_free_page (kpage);
+	page_remove(p->pages, &p->page_table_lock, upage);
     }
   return success;
 }
@@ -701,3 +727,5 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+
+

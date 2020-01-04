@@ -30,6 +30,8 @@ struct process {
   int fd_counter;
   struct file* executable;
   bool terminated;
+  struct hash *pages;
+  struct lock page_table_lock;
 };
 
 tid_t process_execute (const char *file_name);
