@@ -32,7 +32,8 @@ terminate_process (struct intr_frame *f, int status)
 }
 
 static void*
-read_user_mem (uint32_t *pd, const void *upage, size_t sz)
+read_user_mem (uint32_t *pd, const void *upage, size_t sz, bool writable,
+	       void *esp)
 {
   if (pd == NULL)
     {
@@ -42,13 +43,40 @@ read_user_mem (uint32_t *pd, const void *upage, size_t sz)
     {
       return NULL;
     }
-  if ((sz > 1) && (pg_no (upage) != pg_no (upage + sz - 1)))
+
+  struct page *pg;
+  const void *user_addr = upage;
+  int32_t size = sz;
+
+  do
     {
-      if (pagedir_get_page (pd, upage + sz - 1) == NULL)
+      if (pagedir_get_page (pd, user_addr) == NULL)
 	{
-	  return NULL;
+	  if (!retrieve_page (user_addr))
+	    {
+	      if (!grow_stack (user_addr, esp))
+		{
+		  return NULL;
+		}
+	    }
 	}
+      if (writable)
+	{
+	  pg = page_get (pg_round_down (user_addr));
+	  if (pg == NULL)
+	    {
+	      return NULL;
+	    }
+	  if (!pg->writable)
+	    {
+	      return NULL;
+	    }
+	}
+      user_addr += PGSIZE;
+      size -= PGSIZE;
     }
+  while (size > 0);
+
   return pagedir_get_page (pd, upage);
 }
 
@@ -58,7 +86,7 @@ syscall_handler (struct intr_frame *f)
 
   uint32_t *pd = thread_current ()->pagedir;
   struct process *cur_proc = thread_current ()->p;
-  uint32_t *sp = (uint32_t*) read_user_mem (pd, f->esp, 4 * 3);
+  uint32_t *sp = (uint32_t*) read_user_mem (pd, f->esp, 4 * 3, false, f->esp);
 
   if (sp == NULL)
     {
@@ -85,14 +113,16 @@ syscall_handler (struct intr_frame *f)
     case SYS_EXEC:
       {
 	sp++;
-	const char *cmd_line = (char*) read_user_mem (pd, *(char**) sp, 1);
+	const char *cmd_line = (char*) read_user_mem (pd, *(char**) sp, 1,
+						      false, f->esp);
 	if (cmd_line == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
 	// Have to check again because string maybe going into invalid memory
-	cmd_line = (char*) read_user_mem (pd, *(char**) sp, strlen (cmd_line));
+	cmd_line = (char*) read_user_mem (pd, *(char**) sp, strlen (cmd_line),
+					  false, f->esp);
 	if (cmd_line == NULL)
 	  {
 	    terminate_process (f, -1);
@@ -113,14 +143,16 @@ syscall_handler (struct intr_frame *f)
     case SYS_CREATE:
       {
 	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1);
+	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
+							false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
 	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file));
+	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
+					    false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
@@ -136,14 +168,16 @@ syscall_handler (struct intr_frame *f)
     case SYS_REMOVE:
       {
 	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1);
+	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
+							false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
 	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file));
+	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
+					    false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
@@ -157,14 +191,16 @@ syscall_handler (struct intr_frame *f)
     case SYS_OPEN:
       {
 	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1);
+	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
+							false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
 	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file));
+	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
+					    false, f->esp);
 	if (file == NULL)
 	  {
 	    terminate_process (f, -1);
@@ -219,7 +255,8 @@ syscall_handler (struct intr_frame *f)
 	uint8_t *buffer = (uint8_t*) sp;
 	sp++;
 	unsigned size = *(unsigned*) sp;
-	buffer = (uint8_t*) read_user_mem (pd, *(uint8_t**) buffer, size);
+	buffer = (uint8_t*) read_user_mem (pd, *(uint8_t**) buffer, size, true,
+					   f->esp);
 	if (buffer == NULL)
 	  {
 	    terminate_process (f, -1);
@@ -268,7 +305,7 @@ syscall_handler (struct intr_frame *f)
 	void *buffer = sp;
 	sp++;
 	unsigned size = *(unsigned*) sp;
-	buffer = read_user_mem (pd, *(void**) buffer, size);
+	buffer = read_user_mem (pd, *(void**) buffer, size, false, f->esp);
 	if (buffer == NULL)
 	  {
 	    terminate_process (f, -1);

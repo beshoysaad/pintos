@@ -41,5 +41,7 @@ void process_exit (int status);
 void process_activate (void);
 void process_start(void);
 bool install_page (struct frame *f, struct page *p, bool writable);
+bool grow_stack (const void *fault_addr, void *esp);
+bool retrieve_page (const void *fault_addr);
 
 #endif /* userprog/process.h */

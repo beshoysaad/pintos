@@ -156,66 +156,24 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  /*
-  DEBUG_PRINT("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
-      not_present ? "not present" : "rights violation",
-      write ? "writing" : "reading", user ? "user" : "kernel");
-  */
+//  DEBUG_PRINT("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
+//	      not_present ? "not present" : "rights violation",
+//	      write ? "writing" : "reading", user ? "user" : "kernel");
 
   if (user && not_present)
     {
-      struct page *p = page_get (pg_round_down (fault_addr));
-
-      if (p != NULL)
+      if (retrieve_page (fault_addr))
 	{
-	  switch (p->type)
-	    {
-	    case PAGE_TYPE_FILE:
-	      {
-		struct frame *fr = frame_alloc (false);
-
-		ASSERT(fr != NULL);
-
-		off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address, p->ps.fs.size, p->ps.fs.offset);
-
-		ASSERT(read_size == p->ps.fs.size);
-
-		if (p->ps.fs.size < PGSIZE)
-		  {
-		    memset ((uint8_t*)fr->kernel_address + p->ps.fs.size, 0,
-		    PGSIZE - p->ps.fs.size);
-		  }
-
-		bool install_result = install_page(fr, p, p->writable);
-
-		ASSERT(install_result == true);
-
-		break;
-	      }
-	    case PAGE_TYPE_SWAP:
-	      {
-		break;
-	      }
-	    case PAGE_TYPE_ZERO:
-	      {
-		break;
-	      }
-	    default:
-	      {
-		break;
-	      }
-	    }
+	  return;
 	}
-      else
+      if (grow_stack (fault_addr, f->esp))
 	{
-	  thread_exit (-1);
+	  return;
 	}
-
+      thread_exit (-1);
     }
   else
     {
       thread_exit (-1);
     }
-
 }
-

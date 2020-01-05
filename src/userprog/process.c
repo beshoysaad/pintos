@@ -21,6 +21,8 @@
 #include "vm/frame.h"
 #include "vm/page.h"
 
+#define STACK_SIZE_LIMIT	(8 * 1024 * 1024)
+
 struct proc_inf
 {
   char *fn;
@@ -729,4 +731,71 @@ install_page (struct frame *f, struct page *p, bool writable)
       return true;
     }
   return false;
+}
+
+bool
+grow_stack (const void *fault_addr, void *esp)
+{
+  if ((PHYS_BASE <= pg_round_down (fault_addr) + STACK_SIZE_LIMIT)
+      && (esp <= fault_addr + 32))
+    {
+      // Grow stack
+      struct frame *fr = frame_alloc (false);
+      ASSERT(fr != NULL);
+      struct page *pg = page_alloc (pg_round_down (fault_addr), PAGE_TYPE_ZERO,
+				    true);
+      ASSERT(pg != NULL);
+      ASSERT(install_page(fr, pg, true) == true);
+      return true;
+    }
+  return false;
+}
+
+bool
+retrieve_page (const void *fault_addr)
+{
+  struct page *p = page_get (pg_round_down (fault_addr));
+
+  if (p == NULL)
+    {
+      return false;
+    }
+  // Try to load page from disk
+  switch (p->type)
+    {
+    case PAGE_TYPE_FILE:
+      {
+	struct frame *fr = frame_alloc (false);
+
+	ASSERT(fr != NULL);
+
+	off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address,
+					p->ps.fs.size, p->ps.fs.offset);
+
+	ASSERT(read_size == p->ps.fs.size);
+
+	if (p->ps.fs.size < PGSIZE)
+	  {
+	    memset ((uint8_t*) fr->kernel_address + p->ps.fs.size, 0,
+	    PGSIZE - p->ps.fs.size);
+	  }
+
+	bool install_result = install_page (fr, p, p->writable);
+
+	ASSERT(install_result == true);
+	return true;
+      }
+    case PAGE_TYPE_SWAP:
+      {
+	return false;
+      }
+    case PAGE_TYPE_ZERO:
+      {
+	return false;
+      }
+    default:
+      {
+	return false;
+      }
+    }
 }
