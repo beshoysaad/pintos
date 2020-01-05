@@ -572,8 +572,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
-
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
 static bool
@@ -641,7 +639,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  file_seek (file, ofs);
   while (read_bytes > 0 || zero_bytes > 0) 
     {
       /* Calculate how to fill this page.
@@ -651,33 +648,19 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      uint8_t *kpage = page_add(upage, PAGE_TYPE_FILE);
-      if (kpage == NULL)
+      struct page *pg = page_alloc(upage, PAGE_TYPE_FILE, writable);
+      if (pg == NULL)
         return false;
 
-      /* Load this page.
-       * TODO: delay until page fault */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false;
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-	  page_remove(upage);
-          return false; 
-        }
-
-      // TODO set page as not present
-//      pagedir_clear_page(thread_current()->pagedir, upage);
+      memcpy(&pg->ps.fs.f, file, sizeof(struct file));
+      pg->ps.fs.size = page_read_bytes;
+      pg->ps.fs.offset = ofs;
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      ofs += page_read_bytes;
     }
   return true;
 }
@@ -692,15 +675,16 @@ setup_stack (void **esp)
 
   upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
 
-  kpage = page_add (upage, PAGE_TYPE_ZERO);
+  struct page *pg = page_alloc (upage, PAGE_TYPE_ZERO, true);
 
-  if (kpage != NULL)
+  if (pg != NULL)
     {
+      kpage = pg->kernel_address;
       success = install_page (upage, kpage, true);
       if (success)
 	*esp = PHYS_BASE;
       else
-	page_remove(upage);
+	page_free (upage);
     }
   return success;
 }
@@ -714,7 +698,7 @@ setup_stack (void **esp)
    with palloc_get_page().
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
-static bool
+bool
 install_page (void *upage, void *kpage, bool writable)
 {
   struct thread *t = thread_current ();
@@ -724,5 +708,3 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
-
-

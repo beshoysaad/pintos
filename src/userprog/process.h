@@ -39,5 +39,6 @@ int process_wait (tid_t);
 void process_exit (int status);
 void process_activate (void);
 void process_start(void);
+bool install_page (void *upage, void *kpage, bool writable);
 
 #endif /* userprog/process.h */

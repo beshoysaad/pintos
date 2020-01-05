@@ -13,14 +13,6 @@
 #include "userprog/process.h"
 #include "page.h"
 
-struct page
-{
-  struct hash_elem h_elem;
-  void *user_address;
-  void *kernel_address;
-  enum page_type type;
-};
-
 static void
 page_deallocate (struct hash_elem *e, void *aux UNUSED)
 {
@@ -68,24 +60,27 @@ page_table_destroy (void)
   lock_release (&proc->page_table_lock);
 }
 
-void*
-page_add (void *upage, enum page_type type)
+struct page*
+page_alloc (void *upage, enum page_type type, bool writable)
 {
   struct process *proc = thread_current ()->p;
   struct page *pg = (struct page*) malloc (sizeof(struct page));
   ASSERT(pg != NULL);
-  pg->kernel_address = frame_alloc (upage, type == PAGE_TYPE_ZERO);
-  ASSERT(pg->kernel_address != NULL);
+  struct frame *f = frame_alloc (upage, type == PAGE_TYPE_ZERO);
+  ASSERT(f != NULL);
+  ASSERT(f->kernel_address != NULL);
+  pg->kernel_address = f->kernel_address;
   pg->user_address = upage;
   pg->type = type;
+  pg->writable = writable;
   lock_acquire (&proc->page_table_lock);
   ASSERT(hash_insert(proc->pages, &pg->h_elem) == NULL);
   lock_release (&proc->page_table_lock);
-  return pg->kernel_address;
+  return pg;
 }
 
 void
-page_remove (void *upage)
+page_free (void *upage)
 {
   struct process *proc = thread_current ()->p;
   struct page p;
@@ -99,5 +94,23 @@ page_remove (void *upage)
       struct page *g = hash_entry(e, struct page, h_elem);
       frame_free (g->kernel_address);
       free (g);
+    }
+}
+
+struct page*
+page_get (void *upage)
+{
+  struct process *proc = thread_current ()->p;
+  struct page p;
+  struct hash_elem *e;
+  p.user_address = upage;
+  e = hash_find (proc->pages, &p.h_elem);
+  if (e != NULL)
+    {
+      return hash_entry(e, struct page, h_elem);
+    }
+  else
+    {
+      return NULL;
     }
 }

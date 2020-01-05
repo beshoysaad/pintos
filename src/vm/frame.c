@@ -5,21 +5,11 @@
  *      Author: Beshoy Saad
  */
 
-#include "hash.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
 #include "threads/malloc.h"
 #include "frame.h"
-
-struct frame
-{
-  struct hash_elem h_elem; /* Hash table element */
-  void *kernel_address; /* Kernel virtual address of this frame */
-  void *user_address; /* User virtual address of the page occupying this frame */
-  uint8_t unaccessed_count; /* Used in implementing the clock eviction algorithm */
-  struct thread *t; /* Pointer to the thread owning the page in this frame */
-};
 
 static struct hash frames;
 static struct lock frame_table_lock;
@@ -51,7 +41,7 @@ frame_table_init (void)
   hash_init (&frames, frame_hash, frame_less, NULL);
 }
 
-void*
+struct frame*
 frame_alloc (void *user_address, bool zeroed)
 {
   ASSERT(pg_ofs (user_address) == 0);
@@ -73,7 +63,7 @@ frame_alloc (void *user_address, bool zeroed)
       lock_acquire (&frame_table_lock);
       ASSERT(hash_insert (&frames, &f->h_elem) == NULL);
       lock_release (&frame_table_lock);
-      return kaddr;
+      return f;
     }
 }
 
