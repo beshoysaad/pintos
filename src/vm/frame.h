@@ -9,23 +9,22 @@
 #define SRC_VM_FRAME_H_
 
 #include "hash.h"
+#include "page.h"
 
 struct frame
 {
   struct hash_elem h_elem; /* Hash table element */
   void *kernel_address; /* Kernel virtual address of this frame */
-  void *user_address; /* User virtual address of the page occupying this frame */
-  uint8_t unaccessed_count; /* Used in implementing the clock eviction algorithm */
-  struct thread *t; /* Pointer to the thread owning the page in this frame */
+  struct page *user_page;
 };
 
 void
 frame_table_init (void);
 
 struct frame*
-frame_alloc (void *user_address, bool zeroed);
+frame_alloc (bool zeroed);
 
 void
-frame_free (void *kernel_address);
+frame_free (void *kaddr);
 
 #endif /* SRC_VM_FRAME_H_ */

@@ -19,7 +19,7 @@ enum page_type
 
 struct file_storage
 {
-  struct file f;
+  struct file *f;
   off_t size;
   off_t offset;
 };
@@ -33,14 +33,14 @@ struct page
 {
   struct hash_elem h_elem;
   void *user_address;
-  void *kernel_address;
+  struct frame *f;
   enum page_type type;
   bool writable;
   union page_storage ps;
 };
 
 bool
-page_table_init (struct hash **pages);
+page_table_init (struct hash **page_table);
 
 void
 page_table_destroy (void);
@@ -49,7 +49,7 @@ struct page*
 page_alloc (void *upage, enum page_type type, bool writable);
 
 void
-page_free (void *upage);
+page_free (void *uaddr);
 
 struct page*
 page_get (void *upage);

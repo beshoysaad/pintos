@@ -1,4 +1,4 @@
-#define NDEBUG
+//#define NDEBUG
 
 #include "userprog/exception.h"
 #include <inttypes.h>
@@ -11,6 +11,7 @@
 #include "lib/string.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "vm/frame.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -129,9 +130,9 @@ kill (struct intr_frame *f)
 static void
 page_fault (struct intr_frame *f)
 {
-  bool not_present UNUSED; /* True: not-present page, false: writing r/o page. */
+  bool not_present; /* True: not-present page, false: writing r/o page. */
   bool write UNUSED; /* True: access was write, false: access was read. */
-  bool user UNUSED; /* True: access by user, false: access by kernel. */
+  bool user; /* True: access by user, false: access by kernel. */
   void *fault_addr; /* Fault address. */
 
   /* Obtain faulting address, the virtual address that was
@@ -155,34 +156,66 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  /*
   DEBUG_PRINT("Page fault at %p: %s error %s page in %s context.\n", fault_addr,
-	      not_present ? "not present" : "rights violation",
-	      write ? "writing" : "reading", user ? "user" : "kernel");
+      not_present ? "not present" : "rights violation",
+      write ? "writing" : "reading", user ? "user" : "kernel");
+  */
 
-  struct page *p = page_get (pg_round_down (fault_addr));
-
-  if (p != NULL)
+  if (user && not_present)
     {
-      switch (p->type)
-	{
-	case PAGE_TYPE_FILE:
-	  file_read_at (&p->ps.fs.f, p->kernel_address, p->ps.fs.size,
-			p->ps.fs.offset);
-	  if (p->ps.fs.size < PGSIZE)
-	    {
-	      memset (p->kernel_address + p->ps.fs.size, 0,
-	      PGSIZE - p->ps.fs.size);
-	    }
-	  ASSERT(install_page(p->user_address, p->kernel_address, p->writable) == true);
-	  break;
-	case PAGE_TYPE_SWAP:
-	  break;
-	case PAGE_TYPE_ZERO:
-	  break;
-	}
-    }
+      struct page *p = page_get (pg_round_down (fault_addr));
 
-//  kill (f);
+      if (p != NULL)
+	{
+	  switch (p->type)
+	    {
+	    case PAGE_TYPE_FILE:
+	      {
+		struct frame *fr = frame_alloc (false);
+
+		ASSERT(fr != NULL);
+
+		off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address, p->ps.fs.size, p->ps.fs.offset);
+
+		ASSERT(read_size == p->ps.fs.size);
+
+		if (p->ps.fs.size < PGSIZE)
+		  {
+		    memset ((uint8_t*)fr->kernel_address + p->ps.fs.size, 0,
+		    PGSIZE - p->ps.fs.size);
+		  }
+
+		bool install_result = install_page(fr, p, p->writable);
+
+		ASSERT(install_result == true);
+
+		break;
+	      }
+	    case PAGE_TYPE_SWAP:
+	      {
+		break;
+	      }
+	    case PAGE_TYPE_ZERO:
+	      {
+		break;
+	      }
+	    default:
+	      {
+		break;
+	      }
+	    }
+	}
+      else
+	{
+	  thread_exit (-1);
+	}
+
+    }
+  else
+    {
+      thread_exit (-1);
+    }
 
 }
 

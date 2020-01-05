@@ -5,6 +5,7 @@
 #include "lib/user/syscall.h"
 #include "filesys/off_t.h"
 #include "filesys/file.h"
+#include "vm/page.h"
 
 #define ARGC_MAX 128
 #define base_offset 4
@@ -30,7 +31,7 @@ struct process {
   int fd_counter;
   struct file* executable;
   bool terminated;
-  struct hash *pages;
+  struct hash *page_table;
   struct lock page_table_lock;
 };
 
@@ -39,6 +40,6 @@ int process_wait (tid_t);
 void process_exit (int status);
 void process_activate (void);
 void process_start(void);
-bool install_page (void *upage, void *kpage, bool writable);
+bool install_page (struct frame *f, struct page *p, bool writable);
 
 #endif /* userprog/process.h */

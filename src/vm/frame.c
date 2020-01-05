@@ -9,9 +9,10 @@
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
 #include "threads/malloc.h"
+#include <stdio.h>
 #include "frame.h"
 
-static struct hash frames;
+static struct hash frame_table;
 static struct lock frame_table_lock;
 
 /* Returns a hash value for frame f */
@@ -38,43 +39,45 @@ void
 frame_table_init (void)
 {
   lock_init (&frame_table_lock);
-  hash_init (&frames, frame_hash, frame_less, NULL);
+  hash_init (&frame_table, frame_hash, frame_less, NULL);
 }
 
 struct frame*
-frame_alloc (void *user_address, bool zeroed)
+frame_alloc (bool zeroed)
 {
-  ASSERT(pg_ofs (user_address) == 0);
-  enum palloc_flags flags = PAL_USER | zeroed ? PAL_ZERO : 0;
-  void *kaddr = palloc_get_page (flags);
-  if (kaddr == NULL)
+  enum palloc_flags flags = PAL_USER | (zeroed ? PAL_ZERO : 0);
+  struct frame *f = (struct frame*) malloc (sizeof(struct frame));
+  ASSERT(f != NULL);
+  f->user_page = NULL;
+  f->kernel_address = palloc_get_page (flags);
+  if (f->kernel_address == NULL)
     {
-      // TODO implement swapping
+      printf("Out of pages!\r\n");
+      free(f);
+      // TODO evict something
       return NULL;
     }
   else
     {
-      struct frame *f = (struct frame*) malloc (sizeof(struct frame));
-      ASSERT(f != NULL);
-      f->kernel_address = kaddr;
-      f->user_address = user_address;
-      f->unaccessed_count = 0;
-      f->t = thread_current ();
       lock_acquire (&frame_table_lock);
-      ASSERT(hash_insert (&frames, &f->h_elem) == NULL);
+      ASSERT(hash_insert (&frame_table, &f->h_elem) == NULL);
       lock_release (&frame_table_lock);
       return f;
     }
 }
 
 void
-frame_free (void *kernel_address)
+frame_free (void *kaddr)
 {
+  if (kaddr == NULL)
+    {
+      return;
+    }
   struct frame f;
+  f.kernel_address = kaddr;
   struct hash_elem *e;
-  f.kernel_address = kernel_address;
   lock_acquire (&frame_table_lock);
-  e = hash_delete (&frames, &f.h_elem);
+  e = hash_delete (&frame_table, &f.h_elem);
   lock_release (&frame_table_lock);
   if (e != NULL)
     {

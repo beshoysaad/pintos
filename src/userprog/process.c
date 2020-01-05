@@ -101,7 +101,7 @@ process_execute (const char *file_name)
 
   // Init page table
   lock_init (&p->page_table_lock);
-  if (!page_table_init (&p->pages))
+  if (!page_table_init (&p->page_table))
     {
       free (p->list_file_desc);
       free (p);
@@ -652,7 +652,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (pg == NULL)
         return false;
 
-      memcpy(&pg->ps.fs.f, file, sizeof(struct file));
+      // Store page info
+      pg->ps.fs.f = file;
       pg->ps.fs.size = page_read_bytes;
       pg->ps.fs.offset = ofs;
 
@@ -670,41 +671,62 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp)
 {
-  uint8_t *kpage, *upage;
-  bool success = false;
+  uint8_t *upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
 
-  upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
+  struct frame *f = frame_alloc (true);
+
+  if (f == NULL)
+    {
+      return false;
+    }
 
   struct page *pg = page_alloc (upage, PAGE_TYPE_ZERO, true);
 
-  if (pg != NULL)
+  if (pg == NULL)
     {
-      kpage = pg->kernel_address;
-      success = install_page (upage, kpage, true);
-      if (success)
-	*esp = PHYS_BASE;
-      else
-	page_free (upage);
+      frame_free(f->kernel_address);
+      return false;
     }
-  return success;
+
+  if (install_page (f, pg, true))
+    {
+      *esp = PHYS_BASE;
+      return true;
+    }
+  else
+    {
+      page_free (pg->user_address);
+      frame_free(f->kernel_address);
+      return false;
+    }
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
+ virtual address KPAGE to the page table.
+ If WRITABLE is true, the user process may modify the page;
+ otherwise, it is read-only.
+ UPAGE must not already be mapped.
+ KPAGE should probably be a page obtained from the user pool
+ with palloc_get_page().
+ Returns true on success, false if UPAGE is already mapped or
+ if memory allocation fails. */
 bool
-install_page (void *upage, void *kpage, bool writable)
+install_page (struct frame *f, struct page *p, bool writable)
 {
   struct thread *t = thread_current ();
 
+  void *upage = p->user_address;
+  void *kpage = f->kernel_address;
+
   /* Verify that there's not already a page at that virtual
-     address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+   address, then map our page there. */
+
+  if (pagedir_get_page (t->pagedir, upage) == NULL
+      && pagedir_set_page (t->pagedir, upage, kpage, writable))
+    {
+      f->user_page = p;
+      p->f = f;
+      return true;
+    }
+  return false;
 }
