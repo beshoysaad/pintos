@@ -9,11 +9,14 @@
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
 #include "threads/malloc.h"
-#include <stdio.h>
+#include "userprog/pagedir.h"
+#include "swap.h"
 #include "frame.h"
+#include "stdio.h"
 
 static struct hash frame_table;
 static struct lock frame_table_lock;
+struct hash_iterator i;
 
 /* Returns a hash value for frame f */
 static unsigned
@@ -31,7 +34,6 @@ frame_less (const struct hash_elem *a_, const struct hash_elem *b_,
 {
   const struct frame *a = hash_entry(a_, struct frame, h_elem);
   const struct frame *b = hash_entry(b_, struct frame, h_elem);
-
   return a->kernel_address < b->kernel_address;
 }
 
@@ -52,10 +54,66 @@ frame_alloc (bool zeroed)
   f->kernel_address = palloc_get_page (flags);
   if (f->kernel_address == NULL)
     {
-      printf("Out of pages!\r\n");
-      free(f);
-      // TODO evict something
-      return NULL;
+      free (f);
+      if (i.elem == NULL)
+	{
+	  hash_first (&i, &frame_table);
+	}
+      lock_acquire (&frame_table_lock);
+      while (true)
+	{
+	  if (hash_next (&i) == NULL)
+	    {
+	      hash_first (&i, &frame_table);
+	      hash_next (&i);
+	    }
+	  struct frame *fr = hash_entry(hash_cur (&i), struct frame, h_elem);
+	  ASSERT(fr->user_page != NULL);
+	  void *uaddr = fr->user_page->user_address;
+	  uint32_t *user_pd = fr->user_page->pagedir;
+	  if (pagedir_is_accessed (user_pd, uaddr))
+	    {
+	      pagedir_set_accessed (user_pd, uaddr, false);
+	    }
+	  else
+	    {
+	      if (fr->user_page->type == PAGE_TYPE_SWAP)
+		{
+		  fr->user_page->ps.swap_sector = swap_write (
+		      fr->kernel_address);
+		}
+	      else
+		{
+		  if (pagedir_is_dirty (user_pd, uaddr))
+		    {
+		      switch (fr->user_page->type)
+			{
+			case PAGE_TYPE_FILE:
+			  file_write_at (fr->user_page->ps.fs.f,
+					 fr->kernel_address,
+					 fr->user_page->ps.fs.size,
+					 fr->user_page->ps.fs.offset);
+			  break;
+			case PAGE_TYPE_ZERO:
+			  fr->user_page->type = PAGE_TYPE_SWAP;
+			  fr->user_page->ps.swap_sector = swap_write (
+			      fr->kernel_address);
+			  break;
+			default:
+			  ASSERT(false)
+			  ;
+			  break;
+			}
+		      pagedir_set_dirty (user_pd, uaddr, false);
+		    }
+		}
+	      pagedir_clear_page (user_pd, uaddr);
+	      fr->user_page->f = NULL;
+	      fr->user_page = NULL;
+	      lock_release (&frame_table_lock);
+	      return fr;
+	    }
+	}
     }
   else
     {

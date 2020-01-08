@@ -6,6 +6,7 @@
 #include "filesys/off_t.h"
 #include "filesys/file.h"
 #include "vm/page.h"
+#include "devices/block.h"
 
 #define ARGC_MAX 128
 #define base_offset 4

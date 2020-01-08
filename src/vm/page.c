@@ -5,14 +5,14 @@
  *      Author: Beshoy Saad
  */
 
-#include "hash.h"
 #include "debug.h"
 #include "frame.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
-#include "page.h"
 #include "string.h"
+#include "swap.h"
+#include "page.h"
 
 static void
 page_deallocate (struct hash_elem *e, void *aux UNUSED)
@@ -22,6 +22,10 @@ page_deallocate (struct hash_elem *e, void *aux UNUSED)
   if (p->f != NULL)
     {
       frame_free (p->f->kernel_address);
+    }
+  if (p->type == PAGE_TYPE_SWAP)
+    {
+      swap_free (p->ps.swap_sector);
     }
   free (p);
 }
@@ -40,7 +44,6 @@ page_less (const struct hash_elem *a_, const struct hash_elem *b_,
 {
   const struct page *a = hash_entry(a_, struct page, h_elem);
   const struct page *b = hash_entry(b_, struct page, h_elem);
-
   return a->user_address < b->user_address;
 }
 
@@ -67,7 +70,7 @@ page_table_destroy (void)
 }
 
 struct page*
-page_alloc (void *upage, enum page_type type, bool writable)
+page_alloc (void *upage, uint32_t *pagedir, enum page_type type, bool writable)
 {
   ASSERT(upage != NULL);
   struct process *proc = thread_current ()->p;
@@ -77,6 +80,7 @@ page_alloc (void *upage, enum page_type type, bool writable)
   pg->type = type;
   pg->writable = writable;
   pg->f = NULL;
+  pg->pagedir = pagedir;
   memset (&pg->ps, 0, sizeof(union page_storage));
   lock_acquire (&proc->page_table_lock);
   ASSERT(hash_insert(proc->page_table, &pg->h_elem) == NULL);
@@ -105,6 +109,10 @@ page_free (void *upage)
 	{
 	  frame_free (g->f->kernel_address);
 	}
+      if (g->type == PAGE_TYPE_SWAP)
+	{
+	  swap_free (g->ps.swap_sector);
+	}
       free (g);
     }
 }
@@ -120,9 +128,9 @@ page_get (void *upage)
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
-  lock_acquire(&proc->page_table_lock);
+  lock_acquire (&proc->page_table_lock);
   e = hash_find (proc->page_table, &p.h_elem);
-  lock_release(&proc->page_table_lock);
+  lock_release (&proc->page_table_lock);
   if (e != NULL)
     {
       return hash_entry(e, struct page, h_elem);

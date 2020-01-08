@@ -12,6 +12,8 @@
 #include "threads/malloc.h"
 #include "devices/input.h"
 
+#define MIN(A, B)	(((A) < (B)) ? (A) : (B))
+
 struct lock lock_file_sys;
 
 static void
@@ -24,6 +26,12 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
+static inline void*
+next_page (void *addr)
+{
+  return pg_round_down (addr) + PGSIZE;
+}
+
 static void
 terminate_process (struct intr_frame *f, int status)
 {
@@ -32,67 +40,48 @@ terminate_process (struct intr_frame *f, int status)
 }
 
 static void*
-read_user_mem (uint32_t *pd, const void *upage, size_t sz, bool writable,
-	       void *esp)
+get_kernel_address (struct intr_frame *f, uint32_t *pd, void *user_address)
 {
-  if (pd == NULL)
+  if (is_user_vaddr (user_address))
     {
-      return NULL;
-    }
-  if (!is_user_vaddr (upage) || !is_user_vaddr (upage + sz - 1))
-    {
-      return NULL;
-    }
-
-  struct page *pg;
-  const void *user_addr = upage;
-  int32_t size = sz;
-
-  do
-    {
-      if (pagedir_get_page (pd, user_addr) == NULL)
+      void *ret_addr = pagedir_get_page (pd, user_address);
+      if (ret_addr != NULL)
 	{
-	  if (!retrieve_page (user_addr))
+	  return ret_addr;
+	}
+      else if (retrieve_page (user_address))
+	{
+	  void *ret_addr = pagedir_get_page (pd, user_address);
+	  if (ret_addr != NULL)
 	    {
-	      if (!grow_stack (user_addr, esp))
-		{
-		  return NULL;
-		}
+	      return ret_addr;
 	    }
 	}
-      if (writable)
+      else if (grow_stack (user_address, f->esp))
 	{
-	  pg = page_get (pg_round_down (user_addr));
-	  if (pg == NULL)
+	  void *ret_addr = pagedir_get_page (pd, user_address);
+	  if (ret_addr != NULL)
 	    {
-	      return NULL;
-	    }
-	  if (!pg->writable)
-	    {
-	      return NULL;
+	      return ret_addr;
 	    }
 	}
-      user_addr += PGSIZE;
-      size -= PGSIZE;
+      terminate_process (f, -1);
+      return NULL;
     }
-  while (size > 0);
-
-  return pagedir_get_page (pd, upage);
+  terminate_process (f, -1);
+  return NULL;
 }
 
 static void
 syscall_handler (struct intr_frame *f)
 {
 
-  uint32_t *pd = thread_current ()->pagedir;
-  struct process *cur_proc = thread_current ()->p;
-  uint32_t *sp = (uint32_t*) read_user_mem (pd, f->esp, 4 * 3, false, f->esp);
+  struct thread *cur_thread = thread_current ();
+  uint32_t *pd = cur_thread->pagedir;
+  struct process *cur_proc = cur_thread->p;
 
-  if (sp == NULL)
-    {
-      terminate_process (f, -1);
-      return;
-    }
+  uint32_t *user_sp = f->esp;
+  uint32_t *sp = get_kernel_address (f, pd, user_sp);
 
   uint32_t syscall_nr = *sp;
 
@@ -105,29 +94,17 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_EXIT:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int status = *(int*) sp;
 	terminate_process (f, status);
 	break;
       }
     case SYS_EXEC:
       {
-	sp++;
-	const char *cmd_line = (char*) read_user_mem (pd, *(char**) sp, 1,
-						      false, f->esp);
-	if (cmd_line == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
-	// Have to check again because string maybe going into invalid memory
-	cmd_line = (char*) read_user_mem (pd, *(char**) sp, strlen (cmd_line),
-					  false, f->esp);
-	if (cmd_line == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	char *cmd_line = get_kernel_address (f, pd, *(char**) sp);
 	lock_acquire (&lock_file_sys);
 	f->eax = process_execute (cmd_line);
 	lock_release (&lock_file_sys);
@@ -135,30 +112,19 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_WAIT:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	pid_t pid = *(pid_t*) sp;
 	f->eax = process_wait (pid);
 	break;
       }
     case SYS_CREATE:
       {
-	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
-							false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
-	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
-					    false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	char *file = get_kernel_address (f, pd, *(char**) sp);
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	unsigned size = *(unsigned*) sp;
 	lock_acquire (&lock_file_sys);
 	f->eax = filesys_create (file, size);
@@ -167,22 +133,9 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_REMOVE:
       {
-	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
-							false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
-	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
-					    false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	char *file = get_kernel_address (f, pd, *(char**) sp);
 	lock_acquire (&lock_file_sys);
 	f->eax = filesys_remove (file);
 	lock_release (&lock_file_sys);
@@ -190,22 +143,9 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_OPEN:
       {
-	sp++;
-	const char *file = (const char*) read_user_mem (pd, *(char**) sp, 1,
-							false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
-	// Have to check again
-	file = (const char*) read_user_mem (pd, *(char**) sp, strlen (file),
-					    false, f->esp);
-	if (file == NULL)
-	  {
-	    terminate_process (f, -1);
-	    return;
-	  }
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	char *file = get_kernel_address (f, pd, *(char**) sp);
 	struct file *fl = filesys_open (file);
 	if (fl == NULL)
 	  {
@@ -230,10 +170,11 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_FILESIZE:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
-	struct list_elem *e;
 
+	struct list_elem *e;
 	for (e = list_begin (cur_proc->list_file_desc);
 	    e != list_end (cur_proc->list_file_desc); e = list_next (e))
 	  {
@@ -249,25 +190,42 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_READ:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
-	sp++;
-	uint8_t *buffer = (uint8_t*) sp;
-	sp++;
-	unsigned size = *(unsigned*) sp;
-	buffer = (uint8_t*) read_user_mem (pd, *(uint8_t**) buffer, size, true,
-					   f->esp);
-	if (buffer == NULL)
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	uint8_t *user_buffer = *(uint8_t**) sp;
+	if (user_buffer == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	unsigned size = *(unsigned*) sp;
+
 	if (fd == 0)
 	  {
-	    for (unsigned i = 0; i < size; i++)
+	    int32_t rem_size = size;
+	    unsigned chunk_idx = 0;
+	    do
 	      {
-		buffer[i] = input_getc ();
+		uint8_t *kernel_buffer = get_kernel_address (
+		    f, pd, user_buffer + chunk_idx);
+
+		unsigned chunk_sz = MIN(
+		    rem_size,
+		    (uint8_t* )next_page (kernel_buffer) - kernel_buffer);
+
+		for (unsigned i = 0; i < chunk_sz; i++)
+		  {
+		    kernel_buffer[i] = input_getc ();
+		  }
+		rem_size -= chunk_sz;
+		chunk_idx += chunk_sz;
 	      }
+	    while (rem_size > 0);
 	    f->eax = size;
 	    return;
 	  }
@@ -286,9 +244,28 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    lock_acquire (&lock_file_sys);
-		    f->eax = file_read_at (fl->f, buffer, size, fl->pos);
+
+		    int32_t rem_size = size;
+		    unsigned chunk_idx = 0;
+		    f->eax = 0;
+		    do
+		      {
+			uint8_t *kernel_buffer = get_kernel_address (
+			    f, pd, user_buffer + chunk_idx);
+			unsigned chunk_sz = MIN(
+			    rem_size,
+			    (uint8_t* )next_page (kernel_buffer)
+				- kernel_buffer);
+			f->eax += file_read_at (fl->f, kernel_buffer, chunk_sz,
+						fl->pos);
+			fl->pos += f->eax;
+			rem_size -= chunk_sz;
+			chunk_idx += chunk_sz;
+		      }
+		    while (rem_size > 0);
+
 		    lock_release (&lock_file_sys);
-		    fl->pos += f->eax;
+
 		    return;
 		  }
 	      }
@@ -299,18 +276,20 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_WRITE:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
-	sp++;
-	void *buffer = sp;
-	sp++;
-	unsigned size = *(unsigned*) sp;
-	buffer = read_user_mem (pd, *(void**) buffer, size, false, f->esp);
-	if (buffer == NULL)
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	void *user_buffer = *(void**) sp;
+	if (user_buffer == NULL)
 	  {
 	    terminate_process (f, -1);
 	    return;
 	  }
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
+	unsigned size = *(unsigned*) sp;
 	if (fd == 0)
 	  {
 	    f->eax = -1;
@@ -318,7 +297,22 @@ syscall_handler (struct intr_frame *f)
 	  }
 	else if (fd == 1)
 	  {
-	    putbuf (buffer, size);
+
+	    int32_t rem_size = size;
+	    unsigned chunk_idx = 0;
+	    do
+	      {
+		char *kernel_buffer = get_kernel_address (
+		    f, pd, user_buffer + chunk_idx);
+		unsigned chunk_sz = MIN(
+		    rem_size,
+		    (char* )next_page (kernel_buffer) - kernel_buffer);
+		putbuf (kernel_buffer, chunk_sz);
+		rem_size -= chunk_sz;
+		chunk_idx += chunk_sz;
+	      }
+	    while (rem_size > 0);
+
 	    f->eax = size;
 	    return;
 	  }
@@ -332,9 +326,27 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    lock_acquire (&lock_file_sys);
-		    f->eax = file_write_at (fl->f, buffer, size, fl->pos);
+
+		    int32_t rem_size = size;
+		    unsigned chunk_idx = 0;
+		    f->eax = 0;
+		    do
+		      {
+			uint8_t *kernel_buffer = get_kernel_address (
+			    f, pd, user_buffer + chunk_idx);
+			unsigned chunk_sz = MIN(
+			    rem_size,
+			    (uint8_t* )next_page (kernel_buffer)
+				- kernel_buffer);
+			f->eax += file_write_at (fl->f, kernel_buffer, chunk_sz,
+						 fl->pos);
+			fl->pos += f->eax;
+			rem_size -= chunk_sz;
+			chunk_idx += chunk_sz;
+		      }
+		    while (rem_size > 0);
 		    lock_release (&lock_file_sys);
-		    fl->pos += f->eax;
+
 		    return;
 		  }
 	      }
@@ -345,9 +357,11 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_SEEK:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	unsigned position = *(unsigned*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {
@@ -371,7 +385,8 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_TELL:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {
@@ -398,7 +413,8 @@ syscall_handler (struct intr_frame *f)
       }
     case SYS_CLOSE:
       {
-	sp++;
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp);
 	int fd = *(int*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {

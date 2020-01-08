@@ -20,8 +20,9 @@
 #include "threads/malloc.h"
 #include "vm/frame.h"
 #include "vm/page.h"
+#include "vm/swap.h"
 
-#define STACK_SIZE_LIMIT	(8 * 1024 * 1024)
+#define STACK_SIZE_LIMIT	(1024 * 1024)
 
 struct proc_inf
 {
@@ -650,7 +651,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      struct page *pg = page_alloc(upage, PAGE_TYPE_FILE, writable);
+      struct page *pg = page_alloc(upage, thread_current()->pagedir, PAGE_TYPE_FILE, writable);
       if (pg == NULL)
         return false;
 
@@ -682,7 +683,7 @@ setup_stack (void **esp)
       return false;
     }
 
-  struct page *pg = page_alloc (upage, PAGE_TYPE_ZERO, true);
+  struct page *pg = page_alloc (upage, thread_current()->pagedir, PAGE_TYPE_ZERO, true);
 
   if (pg == NULL)
     {
@@ -742,7 +743,8 @@ grow_stack (const void *fault_addr, void *esp)
       // Grow stack
       struct frame *fr = frame_alloc (false);
       ASSERT(fr != NULL);
-      struct page *pg = page_alloc (pg_round_down (fault_addr), PAGE_TYPE_ZERO,
+      struct page *pg = page_alloc (pg_round_down (fault_addr),
+				    thread_current ()->pagedir, PAGE_TYPE_SWAP,
 				    true);
       ASSERT(pg != NULL);
       ASSERT(install_page(fr, pg, true) == true);
@@ -754,48 +756,47 @@ grow_stack (const void *fault_addr, void *esp)
 bool
 retrieve_page (const void *fault_addr)
 {
-  struct page *p = page_get (pg_round_down (fault_addr));
 
+  struct page *p = page_get (pg_round_down (fault_addr));
   if (p == NULL)
     {
       return false;
     }
+
+  struct frame *fr = frame_alloc (false);
+  ASSERT(fr != NULL);
+
   // Try to load page from disk
   switch (p->type)
     {
     case PAGE_TYPE_FILE:
       {
-	struct frame *fr = frame_alloc (false);
-
-	ASSERT(fr != NULL);
-
 	off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address,
 					p->ps.fs.size, p->ps.fs.offset);
-
 	ASSERT(read_size == p->ps.fs.size);
-
 	if (p->ps.fs.size < PGSIZE)
 	  {
 	    memset ((uint8_t*) fr->kernel_address + p->ps.fs.size, 0,
 	    PGSIZE - p->ps.fs.size);
 	  }
-
-	bool install_result = install_page (fr, p, p->writable);
-
-	ASSERT(install_result == true);
-	return true;
+	break;
       }
     case PAGE_TYPE_SWAP:
       {
-	return false;
+	swap_read (p->ps.swap_sector, fr->kernel_address);
+	break;
       }
     case PAGE_TYPE_ZERO:
       {
-	return false;
+	memset(fr->kernel_address, 0, PGSIZE);
+	break;
       }
     default:
       {
-	return false;
+	ASSERT(false);
       }
     }
+  bool install_result = install_page (fr, p, p->writable);
+  ASSERT(install_result == true);
+  return true;
 }

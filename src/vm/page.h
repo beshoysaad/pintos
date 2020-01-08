@@ -11,6 +11,7 @@
 #include "hash.h"
 #include "threads/synch.h"
 #include "filesys/file.h"
+#include "devices/block.h"
 
 enum page_type
 {
@@ -27,12 +28,14 @@ struct file_storage
 union page_storage
 {
   struct file_storage fs;
+  block_sector_t swap_sector;
 };
 
 struct page
 {
   struct hash_elem h_elem;
   void *user_address;
+  uint32_t *pagedir;
   struct frame *f;
   enum page_type type;
   bool writable;
@@ -46,7 +49,7 @@ void
 page_table_destroy (void);
 
 struct page*
-page_alloc (void *upage, enum page_type type, bool writable);
+page_alloc (void *upage, uint32_t *pd, enum page_type type, bool writable);
 
 void
 page_free (void *uaddr);
