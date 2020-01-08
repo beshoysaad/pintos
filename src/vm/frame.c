@@ -89,11 +89,17 @@ frame_alloc (bool zeroed)
 		      switch (fr->user_page->type)
 			{
 			case PAGE_TYPE_FILE:
-			  file_write_at (fr->user_page->ps.fs.f,
-					 fr->kernel_address,
-					 fr->user_page->ps.fs.size,
-					 fr->user_page->ps.fs.offset);
-			  break;
+			  {
+			    off_t written_size = file_write_at (
+				fr->user_page->ps.fs.f, fr->kernel_address,
+				PGSIZE,
+				fr->user_page->ps.fs.offset);
+			    if (written_size == 0) // Write denied. Need to find a different page to evict.
+			      {
+				continue;
+			      }
+			    break;
+			  }
 			case PAGE_TYPE_ZERO:
 			  fr->user_page->type = PAGE_TYPE_SWAP;
 			  fr->user_page->ps.swap_sector = swap_write (

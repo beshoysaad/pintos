@@ -655,10 +655,17 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       if (pg == NULL)
         return false;
 
-      // Store page info
-      pg->ps.fs.f = file;
-      pg->ps.fs.size = page_read_bytes;
-      pg->ps.fs.offset = ofs;
+      if (page_read_bytes == 0)
+	{
+	  pg->type = PAGE_TYPE_ZERO;
+	}
+      else
+	{
+	  // Store page info
+	  pg->ps.fs.f = file;
+	  pg->ps.fs.size = page_read_bytes;
+	  pg->ps.fs.offset = ofs;
+	}
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -788,7 +795,7 @@ retrieve_page (const void *fault_addr)
       }
     case PAGE_TYPE_ZERO:
       {
-	memset(fr->kernel_address, 0, PGSIZE);
+	memset (fr->kernel_address, 0, PGSIZE);
 	break;
       }
     default:
