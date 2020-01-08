@@ -18,7 +18,6 @@ RUN \
   apt-get update && \
   apt-get -y install \
     vim \
-    emacs \
     nano \
     && \
   rm -rf /var/lib/apt/lists/*
