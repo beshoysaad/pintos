@@ -27,4 +27,6 @@ frame_alloc (bool zeroed);
 void
 frame_free (void *kaddr);
 
+bool frame_evict (struct frame *f);
+
 #endif /* SRC_VM_FRAME_H_ */

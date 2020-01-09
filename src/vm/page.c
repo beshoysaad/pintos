@@ -72,7 +72,10 @@ page_table_destroy (void)
 struct page*
 page_alloc (void *upage, uint32_t *pagedir, enum page_type type, bool writable)
 {
-  ASSERT(upage != NULL);
+  if (upage == NULL)
+    {
+      return NULL;
+    }
   struct process *proc = thread_current ()->p;
   struct page *pg = (struct page*) malloc (sizeof(struct page));
   ASSERT(pg != NULL);
@@ -83,7 +86,12 @@ page_alloc (void *upage, uint32_t *pagedir, enum page_type type, bool writable)
   pg->pagedir = pagedir;
   memset (&pg->ps, 0, sizeof(union page_storage));
   lock_acquire (&proc->page_table_lock);
-  ASSERT(hash_insert(proc->page_table, &pg->h_elem) == NULL);
+  if (hash_insert (proc->page_table, &pg->h_elem) != NULL) // Page already exists
+    {
+      lock_release (&proc->page_table_lock);
+      free (pg);
+      return NULL;
+    }
   lock_release (&proc->page_table_lock);
   return pg;
 }

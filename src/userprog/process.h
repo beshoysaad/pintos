@@ -34,6 +34,9 @@ struct process {
   bool terminated;
   struct hash *page_table;
   struct lock page_table_lock;
+  mapid_t mapping_counter;
+  struct hash *mapping_table;
+  struct lock mapping_table_lock;
 };
 
 tid_t process_execute (const char *file_name);
@@ -44,5 +47,8 @@ void process_start(void);
 bool install_page (struct frame *f, struct page *p, bool writable);
 bool grow_stack (const void *fault_addr, void *esp);
 bool retrieve_page (const void *fault_addr);
+bool
+load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
+	      uint32_t zero_bytes, bool writable);
 
 #endif /* userprog/process.h */

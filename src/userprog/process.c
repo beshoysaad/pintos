@@ -21,6 +21,7 @@
 #include "vm/frame.h"
 #include "vm/page.h"
 #include "vm/swap.h"
+#include "vm/mapping.h"
 
 #define STACK_SIZE_LIMIT	(1024 * 1024)
 
@@ -106,6 +107,18 @@ process_execute (const char *file_name)
   lock_init (&p->page_table_lock);
   if (!page_table_init (&p->page_table))
     {
+      free (p->list_file_desc);
+      free (p);
+      palloc_free_page (p_inf->fn);
+      free (p_inf);
+      return TID_ERROR;
+    }
+
+  // Init mapping table
+  lock_init(&p->mapping_table_lock);
+  if (!mapping_table_init (&p->mapping_table))
+    {
+      page_table_destroy ();
       free (p->list_file_desc);
       free (p);
       palloc_free_page (p_inf->fn);
@@ -335,6 +348,9 @@ process_exit (int status)
 
     }
 
+  // Free mapped files
+  mapping_table_destroy();
+
   // Free this process's page table
   page_table_destroy();
 
@@ -448,9 +464,7 @@ struct Elf32_Phdr
 
 static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
-static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
-                          uint32_t read_bytes, uint32_t zero_bytes,
-                          bool writable);
+
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP
@@ -634,13 +648,17 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
 
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
-static bool
+bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
-  ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
+
+  if (pg_ofs (upage) != 0)
+    {
+      return false;
+    }
 
   while (read_bytes > 0 || zero_bytes > 0) 
     {
@@ -748,14 +766,17 @@ grow_stack (const void *fault_addr, void *esp)
       && (esp <= fault_addr + 32))
     {
       // Grow stack
-      struct frame *fr = frame_alloc (false);
-      ASSERT(fr != NULL);
+
       struct page *pg = page_alloc (pg_round_down (fault_addr),
 				    thread_current ()->pagedir, PAGE_TYPE_SWAP,
 				    true);
-      ASSERT(pg != NULL);
-      ASSERT(install_page(fr, pg, true) == true);
-      return true;
+      if (pg == NULL)
+	{
+	  return false;
+	}
+      struct frame *fr = frame_alloc (false);
+      ASSERT(fr != NULL);
+      return install_page(fr, pg, true);
     }
   return false;
 }
@@ -807,3 +828,4 @@ retrieve_page (const void *fault_addr)
   ASSERT(install_result == true);
   return true;
 }
+

@@ -77,47 +77,11 @@ frame_alloc (bool zeroed)
 	    }
 	  else
 	    {
-	      if (fr->user_page->type == PAGE_TYPE_SWAP)
+	      if (frame_evict (fr))
 		{
-		  fr->user_page->ps.swap_sector = swap_write (
-		      fr->kernel_address);
+		  lock_release (&frame_table_lock);
+		  return fr;
 		}
-	      else
-		{
-		  if (pagedir_is_dirty (user_pd, uaddr))
-		    {
-		      switch (fr->user_page->type)
-			{
-			case PAGE_TYPE_FILE:
-			  {
-			    off_t written_size = file_write_at (
-				fr->user_page->ps.fs.f, fr->kernel_address,
-				PGSIZE,
-				fr->user_page->ps.fs.offset);
-			    if (written_size == 0) // Write denied. Need to find a different page to evict.
-			      {
-				continue;
-			      }
-			    break;
-			  }
-			case PAGE_TYPE_ZERO:
-			  fr->user_page->type = PAGE_TYPE_SWAP;
-			  fr->user_page->ps.swap_sector = swap_write (
-			      fr->kernel_address);
-			  break;
-			default:
-			  ASSERT(false)
-			  ;
-			  break;
-			}
-		      pagedir_set_dirty (user_pd, uaddr, false);
-		    }
-		}
-	      pagedir_clear_page (user_pd, uaddr);
-	      fr->user_page->f = NULL;
-	      fr->user_page = NULL;
-	      lock_release (&frame_table_lock);
-	      return fr;
 	    }
 	}
     }
@@ -149,5 +113,53 @@ frame_free (void *kaddr)
       palloc_free_page (g->kernel_address);
       free (g);
     }
+}
+
+bool
+frame_evict (struct frame *fr)
+{
+  ASSERT(fr->user_page != NULL);
+  void *uaddr = fr->user_page->user_address;
+  uint32_t *user_pd = fr->user_page->pagedir;
+  if (fr->user_page->type == PAGE_TYPE_SWAP)
+    {
+      fr->user_page->ps.swap_sector = swap_write (fr->kernel_address);
+      printf ("evicted page %p swap %d\r\n", fr->user_page->user_address,
+	      fr->user_page->ps.swap_sector);
+    }
+  else
+    {
+      if (pagedir_is_dirty (user_pd, uaddr))
+	{
+	  switch (fr->user_page->type)
+	    {
+	    case PAGE_TYPE_FILE:
+	      {
+		off_t written_size = file_write_at (
+		    fr->user_page->ps.fs.f, fr->kernel_address,
+		    PGSIZE,
+		    fr->user_page->ps.fs.offset);
+		if (written_size == 0) // Write denied. Need to find a different page to evict.
+		  {
+		    return false;
+		  }
+		break;
+	      }
+	    case PAGE_TYPE_ZERO:
+	      fr->user_page->type = PAGE_TYPE_SWAP;
+	      fr->user_page->ps.swap_sector = swap_write (fr->kernel_address);
+	      break;
+	    default:
+	      ASSERT(false)
+	      ;
+	      break;
+	    }
+	  pagedir_set_dirty (user_pd, uaddr, false);
+	}
+    }
+  pagedir_clear_page (user_pd, uaddr);
+  fr->user_page->f = NULL;
+  fr->user_page = NULL;
+  return true;
 }
 

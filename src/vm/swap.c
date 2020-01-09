@@ -49,6 +49,7 @@ swap_read (block_sector_t sector, void *kaddr)
 {
   ASSERT(sector != BITMAP_ERROR);
   ASSERT(kaddr != NULL);
+  ASSERT(bitmap_all(swap_bm, sector, 8));
   for (int i = 0; i < 8; i++)
     {
       block_read (swap_block, sector + i, kaddr + (i * BLOCK_SECTOR_SIZE));
@@ -60,6 +61,7 @@ void
 swap_free (block_sector_t sector)
 {
   ASSERT(sector != BITMAP_ERROR);
+  ASSERT(bitmap_all(swap_bm, sector, 8));
   lock_acquire (&swap_table_lock);
   bitmap_set_multiple (swap_bm, sector, 8, false);
   lock_release (&swap_table_lock);

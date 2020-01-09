@@ -11,6 +11,7 @@
 #include "filesys/filesys.h"
 #include "threads/malloc.h"
 #include "devices/input.h"
+#include "vm/mapping.h"
 
 #define MIN(A, B)	(((A) < (B)) ? (A) : (B))
 
@@ -43,6 +44,10 @@ static void*
 get_kernel_address (struct intr_frame *f, uint32_t *pd, void *user_address,
 bool writable)
 {
+  if (user_address == NULL)
+    {
+      goto error;
+    }
   void *ret_addr = NULL;
   if (!is_user_vaddr (user_address))
     {
@@ -444,6 +449,46 @@ syscall_handler (struct intr_frame *f)
 	  }
 	break;
       }
+    case SYS_MMAP:
+      user_sp++;
+      sp = get_kernel_address (f, pd, user_sp, false);
+      int fd = *(int*) sp;
+      if ((fd == 0) || (fd == 1))
+	{
+	  f->eax = -1;
+	  return;
+	}
+      user_sp++;
+      sp = get_kernel_address (f, pd, user_sp, false);
+      void *addr = *(void**) sp;
+      struct list_elem *e;
+      for (e = list_begin (cur_proc->list_file_desc);
+	  e != list_end (cur_proc->list_file_desc); e = list_next (e))
+	{
+	  struct file_desc *fl = list_entry(e, struct file_desc, elem);
+	  if (fl->fd == fd)
+	    {
+	      struct mapping *mp = mapping_alloc (addr, fl->f);
+	      if (mp == NULL)
+		{
+		  f->eax = -1;
+		}
+	      else
+		{
+		  f->eax = mp->map_id;
+		}
+	      return;
+	    }
+	}
+
+      terminate_process (f, -1);
+      break;
+    case SYS_MUNMAP:
+      user_sp++;
+      sp = get_kernel_address (f, pd, user_sp, false);
+      mapid_t mapping = *(mapid_t*)sp;
+      mapping_free(mapping);
+      break;
     default:
       break;
     }
