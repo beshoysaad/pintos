@@ -768,13 +768,13 @@ grow_stack (const void *fault_addr, void *esp)
       // Grow stack
 
       struct page *pg = page_alloc (pg_round_down (fault_addr),
-				    thread_current ()->pagedir, PAGE_TYPE_SWAP,
+				    thread_current ()->pagedir, PAGE_TYPE_ZERO,
 				    true);
       if (pg == NULL)
 	{
 	  return false;
 	}
-      struct frame *fr = frame_alloc (false);
+      struct frame *fr = frame_alloc (true);
       ASSERT(fr != NULL);
       return install_page(fr, pg, true);
     }
