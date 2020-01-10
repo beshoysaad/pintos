@@ -21,7 +21,7 @@ swap_table_init (void)
 {
   swap_block = block_get_role (BLOCK_SWAP);
   ASSERT(swap_block != NULL);
-  swap_bm = bitmap_create (8192);
+  swap_bm = bitmap_create (block_size (swap_block));
   ASSERT(swap_bm != NULL);
   lock_init (&swap_table_lock);
 }
@@ -34,12 +34,10 @@ swap_write (void *kaddr)
   lock_acquire (&swap_table_lock);
   s = bitmap_scan_and_flip (swap_bm, 0, 8, false);
   lock_release (&swap_table_lock);
-  if (s != BITMAP_ERROR)
+  ASSERT(s != BITMAP_ERROR);
+  for (int i = 0; i < 8; i++)
     {
-      for (int i = 0; i < 8; i++)
-	{
-	  block_write (swap_block, s + i, kaddr + (i * BLOCK_SECTOR_SIZE));
-	}
+      block_write (swap_block, s + i, kaddr + (i * BLOCK_SECTOR_SIZE));
     }
   return s;
 }
@@ -47,9 +45,9 @@ swap_write (void *kaddr)
 void
 swap_read (block_sector_t sector, void *kaddr)
 {
-  ASSERT(sector != BITMAP_ERROR);
+  ASSERT(sector < (block_size (swap_block) - 7));
   ASSERT(kaddr != NULL);
-  ASSERT(bitmap_all(swap_bm, sector, 8));
+  ASSERT(bitmap_all (swap_bm, sector, 8));
   for (int i = 0; i < 8; i++)
     {
       block_read (swap_block, sector + i, kaddr + (i * BLOCK_SECTOR_SIZE));
@@ -60,8 +58,8 @@ swap_read (block_sector_t sector, void *kaddr)
 void
 swap_free (block_sector_t sector)
 {
-  ASSERT(sector != BITMAP_ERROR);
-  ASSERT(bitmap_all(swap_bm, sector, 8));
+  ASSERT(sector < (block_size (swap_block) - 7));
+  ASSERT(bitmap_all (swap_bm, sector, 8));
   lock_acquire (&swap_table_lock);
   bitmap_set_multiple (swap_bm, sector, 8, false);
   lock_release (&swap_table_lock);

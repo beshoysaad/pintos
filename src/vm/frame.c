@@ -17,6 +17,7 @@
 static struct hash frame_table;
 static struct lock frame_table_lock;
 struct hash_iterator i;
+extern struct lock lock_file_sys;
 
 /* Returns a hash value for frame f */
 static unsigned
@@ -55,11 +56,11 @@ frame_alloc (bool zeroed)
   if (f->kernel_address == NULL)
     {
       free (f);
+      lock_acquire (&frame_table_lock);
       if (i.elem == NULL)
 	{
 	  hash_first (&i, &frame_table);
 	}
-      lock_acquire (&frame_table_lock);
       while (true)
 	{
 	  if (hash_next (&i) == NULL)
@@ -68,7 +69,10 @@ frame_alloc (bool zeroed)
 	      hash_next (&i);
 	    }
 	  struct frame *fr = hash_entry(hash_cur (&i), struct frame, h_elem);
-	  ASSERT(fr->user_page != NULL);
+	  if (fr->user_page == NULL)
+	    {
+	      continue;
+	    }
 	  void *uaddr = fr->user_page->user_address;
 	  uint32_t *user_pd = fr->user_page->pagedir;
 	  if (pagedir_is_accessed (user_pd, uaddr))
@@ -124,8 +128,6 @@ frame_evict (struct frame *fr)
   if (fr->user_page->type == PAGE_TYPE_SWAP)
     {
       fr->user_page->ps.swap_sector = swap_write (fr->kernel_address);
-      printf ("evicted page %p swap %d\r\n", fr->user_page->user_address,
-	      fr->user_page->ps.swap_sector);
     }
   else
     {
@@ -135,10 +137,12 @@ frame_evict (struct frame *fr)
 	    {
 	    case PAGE_TYPE_FILE:
 	      {
+		lock_acquire (&lock_file_sys);
 		off_t written_size = file_write_at (
 		    fr->user_page->ps.fs.f, fr->kernel_address,
 		    PGSIZE,
 		    fr->user_page->ps.fs.offset);
+		lock_release (&lock_file_sys);
 		if (written_size == 0) // Write denied. Need to find a different page to evict.
 		  {
 		    return false;

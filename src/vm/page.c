@@ -21,12 +21,13 @@ page_deallocate (struct hash_elem *e, void *aux UNUSED)
   ASSERT(p != NULL);
   if (p->f != NULL)
     {
+      if (p->type == PAGE_TYPE_SWAP)
+	{
+	  swap_free (p->ps.swap_sector);
+	}
       frame_free (p->f->kernel_address);
     }
-  if (p->type == PAGE_TYPE_SWAP)
-    {
-      swap_free (p->ps.swap_sector);
-    }
+
   free (p);
 }
 
@@ -115,12 +116,13 @@ page_free (void *upage)
       struct page *g = hash_entry(e, struct page, h_elem);
       if (g->f != NULL)
 	{
+	  if (g->type == PAGE_TYPE_SWAP)
+	    {
+	      swap_free (g->ps.swap_sector);
+	    }
 	  frame_free (g->f->kernel_address);
 	}
-      if (g->type == PAGE_TYPE_SWAP)
-	{
-	  swap_free (g->ps.swap_sector);
-	}
+
       free (g);
     }
 }

@@ -13,6 +13,8 @@
 #include "threads/thread.h"
 #include "userprog/process.h"
 
+extern struct lock lock_file_sys;
+
 static void
 mapping_deallocate (struct hash_elem *e, void *aux UNUSED)
 {
@@ -78,13 +80,15 @@ mapping_alloc (void *upage, struct file *f)
   struct process *proc = thread_current ()->p;
   struct mapping *mp = (struct mapping*) malloc (sizeof(struct mapping));
   ASSERT(mp != NULL);
+  lock_acquire(&lock_file_sys);
   off_t file_size = file_length (f);
+  lock_release(&lock_file_sys);
   if (file_size == 0)
     {
       free (mp);
       return NULL;
     }
-  if (!load_segment (f, 0, upage, file_size, PGSIZE - file_size % PGSIZE, true))
+  if (!load_segment (f, 0, upage, file_size, PGSIZE - (file_size % PGSIZE), true))
     {
       free (mp);
       return NULL;

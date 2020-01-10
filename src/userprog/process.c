@@ -25,6 +25,8 @@
 
 #define STACK_SIZE_LIMIT	(1024 * 1024)
 
+extern struct lock lock_file_sys;
+
 struct proc_inf
 {
   char *fn;
@@ -115,6 +117,7 @@ process_execute (const char *file_name)
     }
 
   // Init mapping table
+  p->mapping_counter = 0;
   lock_init(&p->mapping_table_lock);
   if (!mapping_table_init (&p->mapping_table))
     {
@@ -799,8 +802,10 @@ retrieve_page (const void *fault_addr)
     {
     case PAGE_TYPE_FILE:
       {
+	lock_acquire(&lock_file_sys);
 	off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address,
 					p->ps.fs.size, p->ps.fs.offset);
+	lock_release(&lock_file_sys);
 	ASSERT(read_size == p->ps.fs.size);
 	if (p->ps.fs.size < PGSIZE)
 	  {
@@ -824,8 +829,7 @@ retrieve_page (const void *fault_addr)
 	ASSERT(false);
       }
     }
-  bool install_result = install_page (fr, p, p->writable);
-  ASSERT(install_result == true);
-  return true;
+
+  return install_page (fr, p, p->writable);
 }
 
