@@ -40,6 +40,10 @@ frame_less (const struct hash_elem *a_, const struct hash_elem *b_,
 void
 frame_table_init (void)
 {
+#if DEBUG_VM
+  printf("==| %s\n", __FUNCTION__);
+#endif // DEBUG_VM
+
   lock_init (&frame_table_lock);
   hash_init (&frame_table, frame_hash, frame_less, NULL);
 }
@@ -47,6 +51,10 @@ frame_table_init (void)
 struct frame*
 frame_alloc (bool zeroed)
 {
+#if DEBUG_VM
+  printf("==| %s: zeroed=%i\n", __FUNCTION__, zeroed);
+#endif // DEBUG_VM
+
   enum palloc_flags flags = PAL_USER | (zeroed ? PAL_ZERO : 0);
   struct frame *f = (struct frame*) malloc (sizeof(struct frame));
   ASSERT(f != NULL);
@@ -56,34 +64,34 @@ frame_alloc (bool zeroed)
     {
       free (f);
       if (i.elem == NULL)
-	{
-	  hash_first (&i, &frame_table);
-	}
+        {
+          hash_first (&i, &frame_table);
+        }
       lock_acquire (&frame_table_lock);
       while (true)
-	{
-	  if (hash_next (&i) == NULL)
-	    {
-	      hash_first (&i, &frame_table);
-	      hash_next (&i);
-	    }
-	  struct frame *fr = hash_entry(hash_cur (&i), struct frame, h_elem);
-	  ASSERT(fr->user_page != NULL);
-	  void *uaddr = fr->user_page->user_address;
-	  uint32_t *user_pd = fr->user_page->pagedir;
-	  if (pagedir_is_accessed (user_pd, uaddr))
-	    {
-	      pagedir_set_accessed (user_pd, uaddr, false);
-	    }
-	  else
-	    {
-	      if (frame_evict (fr))
-		{
-		  lock_release (&frame_table_lock);
-		  return fr;
-		}
-	    }
-	}
+        {
+          if (hash_next (&i) == NULL)
+            {
+              hash_first (&i, &frame_table);
+              hash_next (&i);
+            }
+          struct frame *fr = hash_entry(hash_cur (&i), struct frame, h_elem);
+          ASSERT(fr->user_page != NULL);
+          void *uaddr = fr->user_page->user_address;
+          uint32_t *user_pd = fr->user_page->pagedir;
+          if (pagedir_is_accessed (user_pd, uaddr))
+            {
+              pagedir_set_accessed (user_pd, uaddr, false);
+            }
+          else
+            {
+              if (frame_evict (fr))
+                {
+                  lock_release (&frame_table_lock);
+                  return fr;
+                }
+            }
+        }
     }
   else
     {
@@ -97,6 +105,10 @@ frame_alloc (bool zeroed)
 void
 frame_free (void *kaddr)
 {
+#if DEBUG_VM
+  printf("==| %s: kaddr=%p\n", __FUNCTION__, kaddr);
+#endif // DEBUG_VM
+
   if (kaddr == NULL)
     {
       return;
@@ -118,6 +130,10 @@ frame_free (void *kaddr)
 bool
 frame_evict (struct frame *fr)
 {
+#if DEBUG_VM
+  printf("==| %s: frame=%p\n", __FUNCTION__, fr);
+#endif // DEBUG_VM
+
   ASSERT(fr->user_page != NULL);
   void *uaddr = fr->user_page->user_address;
   uint32_t *user_pd = fr->user_page->pagedir;

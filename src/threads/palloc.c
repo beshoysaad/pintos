@@ -70,6 +70,10 @@ palloc_init (size_t user_page_limit)
 void *
 palloc_get_multiple (enum palloc_flags flags, size_t page_cnt)
 {
+#if DEBUG_THREADS
+  printf("==| %s: flags=%i, page_cnt=%u", __FUNCTION__, flags, page_cnt);
+#endif // DEBUG_THREADS
+
   struct pool *pool = flags & PAL_USER ? &user_pool : &kernel_pool;
   void *pages;
   size_t page_idx;
@@ -97,6 +101,10 @@ palloc_get_multiple (enum palloc_flags flags, size_t page_cnt)
         PANIC ("palloc_get: out of pages");
     }
 
+#if DEBUG_THREADS
+  printf(" --> %p\n", pages);
+#endif // DEBUG_THREADS
+
   return pages;
 }
 
@@ -117,6 +125,10 @@ palloc_get_page (enum palloc_flags flags)
 void
 palloc_free_multiple (void *pages, size_t page_cnt) 
 {
+#if DEBUG_THREADS
+  printf("==| %s: pages=%p, page_cnt=%u\n", __FUNCTION__, pages, page_cnt);
+#endif // DEBUG_THREADS
+
   struct pool *pool;
   size_t page_idx;
 
@@ -137,6 +149,7 @@ palloc_free_multiple (void *pages, size_t page_cnt)
   memset (pages, 0xcc, PGSIZE * page_cnt);
 #endif
 
+  //ASSERT (bitmap_all (pool->used_map, page_idx, page_cnt));
   bitmap_set_multiple (pool->used_map, page_idx, page_cnt, false);
 }
 

@@ -479,7 +479,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
-
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
@@ -652,6 +651,11 @@ bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
+#if DEBUG_USERPROG
+      printf("==| %s: file=%p, ofs=%i, upage=%p, read_bytes=%u, zero_bytes=%u, writable=%i\n",
+        __FUNCTION__, file, ofs, upage, read_bytes, zero_bytes, writable);
+#endif // DEBUG_USERPROG
+
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (ofs % PGSIZE == 0);
 
@@ -671,19 +675,24 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       /* Get a page of memory. */
       struct page *pg = page_alloc(upage, thread_current()->pagedir, PAGE_TYPE_FILE, writable);
       if (pg == NULL)
-        return false;
+        {
+#if DEBUG_USERPROG
+          printf("==| %s: END FALSE\n", __FUNCTION__);
+#endif // DEBUG_USERPROG
+          return false;
+        }
 
       if (page_read_bytes == 0)
-	{
-	  pg->type = PAGE_TYPE_ZERO;
-	}
+        {
+          pg->type = PAGE_TYPE_ZERO;
+        }
       else
-	{
-	  // Store page info
-	  pg->ps.fs.f = file;
-	  pg->ps.fs.size = page_read_bytes;
-	  pg->ps.fs.offset = ofs;
-	}
+        {
+          // Store page info
+          pg->ps.fs.f = file;
+          pg->ps.fs.size = page_read_bytes;
+          pg->ps.fs.offset = ofs;
+        }
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -691,6 +700,10 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       upage += PGSIZE;
       ofs += page_read_bytes;
     }
+
+#if DEBUG_USERPROG
+      printf("==| %s: END\n", __FUNCTION__);
+#endif // DEBUG_USERPROG
   return true;
 }
 
@@ -699,6 +712,10 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp)
 {
+#if DEBUG_USERPROG
+  printf("==| %s: esp=%p\n", __FUNCTION__, esp);
+#endif // DEBUG_USERPROG
+
   uint8_t *upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
 
   struct frame *f = frame_alloc (true);

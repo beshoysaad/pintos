@@ -9,6 +9,10 @@
 struct file *
 file_open (struct inode *inode) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: inode=%p\n", __FUNCTION__, inode);
+#endif // DEBUG_FILESYS
+
   struct file *file = calloc (1, sizeof *file);
   if (inode != NULL && file != NULL)
     {
@@ -30,6 +34,10 @@ file_open (struct inode *inode)
 struct file *
 file_reopen (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   return file_open (inode_reopen (file->inode));
 }
 
@@ -37,6 +45,10 @@ file_reopen (struct file *file)
 void
 file_close (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   if (file != NULL)
     {
       file_allow_write (file);
@@ -60,6 +72,10 @@ file_get_inode (struct file *file)
 off_t
 file_read (struct file *file, void *buffer, off_t size) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p, buffer=%p, size=%i\n", __FUNCTION__, file, buffer, size);
+#endif // DEBUG_FILESYS
+
   off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_read;
   return bytes_read;
@@ -73,6 +89,10 @@ file_read (struct file *file, void *buffer, off_t size)
 off_t
 file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p, buffer=%p, size=%i, file_ofs=%i\n", __FUNCTION__, file, buffer, size, file_ofs);
+#endif // DEBUG_FILESYS
+
   return inode_read_at (file->inode, buffer, size, file_ofs);
 }
 
@@ -86,6 +106,10 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write (struct file *file, const void *buffer, off_t size) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p, buffer=%p, size=%i\n", __FUNCTION__, file, buffer, size);
+#endif // DEBUG_FILESYS
+
   off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
@@ -102,6 +126,10 @@ off_t
 file_write_at (struct file *file, const void *buffer, off_t size,
                off_t file_ofs) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p, buffer=%p, size=%i, file_ofs=%i\n", __FUNCTION__, file, buffer, size, file_ofs);
+#endif // DEBUG_FILESYS
+
   return inode_write_at (file->inode, buffer, size, file_ofs);
 }
 
@@ -110,6 +138,10 @@ file_write_at (struct file *file, const void *buffer, off_t size,
 void
 file_deny_write (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   ASSERT (file != NULL);
   if (!file->deny_write) 
     {
@@ -124,6 +156,10 @@ file_deny_write (struct file *file)
 void
 file_allow_write (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   ASSERT (file != NULL);
   if (file->deny_write) 
     {
@@ -136,6 +172,10 @@ file_allow_write (struct file *file)
 off_t
 file_length (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   ASSERT (file != NULL);
   return inode_length (file->inode);
 }
@@ -145,6 +185,10 @@ file_length (struct file *file)
 void
 file_seek (struct file *file, off_t new_pos)
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p, new_pos=%i\n", __FUNCTION__, file, new_pos);
+#endif // DEBUG_FILESYS
+
   ASSERT (file != NULL);
   ASSERT (new_pos >= 0);
   file->pos = new_pos;
@@ -155,6 +199,10 @@ file_seek (struct file *file, off_t new_pos)
 off_t
 file_tell (struct file *file) 
 {
+#if DEBUG_FILESYS
+  printf("==| %s: file=%p\n", __FUNCTION__, file);
+#endif // DEBUG_FILESYS
+
   ASSERT (file != NULL);
   return file->pos;
 }

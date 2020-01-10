@@ -99,15 +99,20 @@ lookup (const struct dir *dir, const char *name,
   ASSERT (name != NULL);
 
   for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
-       ofs += sizeof e) 
-    if (e.in_use && !strcmp (name, e.name)) 
-      {
-        if (ep != NULL)
-          *ep = e;
-        if (ofsp != NULL)
-          *ofsp = ofs;
-        return true;
-      }
+       ofs += sizeof e)
+    {
+#if DEBUG_FILESYS
+      printf("==| %s: inode_sector=%i name=%s in_use=%i\n", __FUNCTION__, e.inode_sector, e.name, e.in_use);
+#endif // DEBUG_FILESYS
+      if (e.in_use && !strcmp (name, e.name)) 
+        {
+          if (ep != NULL)
+            *ep = e;
+          if (ofsp != NULL)
+            *ofsp = ofs;
+          return true;
+        }
+    }
   return false;
 }
 
@@ -128,6 +133,10 @@ dir_lookup (const struct dir *dir, const char *name,
     *inode = inode_open (e.inode_sector);
   else
     *inode = NULL;
+
+#if DEBUG_FILESYS
+  printf("==| %s: inode=%p\n", __FUNCTION__, *inode);
+#endif // DEBUG_FILESYS
 
   return *inode != NULL;
 }
