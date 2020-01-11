@@ -9,7 +9,7 @@
 >> Fill in the names, email addresses and matriculation numbers of your group members.
 
 Beshoy Saad         <s8besaad@stud.uni-saarland.de> 2572741
-Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
+Sandro Montemezzani <s8samont@stud.uni-saarland.de> 2563261
 
 ---- PRELIMINARIES ----
 
@@ -29,24 +29,48 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct process
+{
+  ...
+  struct hash *page_table;
+  struct lock page_table_lock;
+}
+
+Two members have been introduced to the process struct.
+One pointer for the page table and a lock for all operations
+on the page table.
+
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
+/TODO: answer /
+
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
+
+/TODO: answer /
 
 ---- SYNCHRONIZATION ----
 
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
+Races are avoided by using a lock `frame_table_lock' on frame table
+operations during frame aquisitions. Only one process at a time can
+allocate a new frame.
+Since each process has its own page table, page themselve do not
+need to be synchronized.
+
 ---- RATIONALE ----
 
 >> A5: Why did you choose the data structure(s) that you did for
 >> representing virtual-to-physical mappings?
+
+Since pages need to be handled on a per process basis, the best
+solution was to store the information in the process struct.
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -57,18 +81,81 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+enum page_type { PAGE_TYPE_FILE, PAGE_TYPE_SWAP, PAGE_TYPE_ZERO };
+
+describes the type of the current page. It either refers to a
+file, to a memory section on the swap partition, or to a section
+of ZERO'ed bytes.
+
+struct file_storage
+{
+  struct file *f;
+  off_t size;
+  off_t offset;
+};
+
+This structure holds information about the file the page refers
+to (in case of type `PAGE_TYPE_FILE'). A pointer to the file
+struct, the offset of the filecontents that this page holds,
+and in case that the contents do not fill the whole page, it
+also stores the size of actual data in the page.
+
+union page_storage
+{
+  struct file_storage fs;
+  block_sector_t swap_sector;
+};
+
+For convinience, we create a union over the `file_storage' and
+`block_sector' structs, as only one of those is needed at a time.
+Which one is determined by the type of the table.
+
+struct page
+{
+  struct hash_elem h_elem;  // Hash element for the page table
+  void *user_address;       // userspace address this page referrs to
+  uint32_t *pagedir;        // pointer to the page directory
+  struct frame *f;          // page frame in use
+  enum page_type type;      // type of this page
+  bool writable;            // whether this pages contents can modified
+  union page_storage ps;
+};
+
+This structure holds the metadata for a single page.
+
+static struct hash frame_table;
+static struct lock frame_table_lock;
+
+These are the global frame table hash table and a lock
+for all operations on the frame table.
+
+struct frame
+{
+  struct hash_elem h_elem;  // Hash element for the frame table
+  void *kernel_address;     // kernelspace address of the frame
+  struct page *user_page;   // pointer to the page lying in the frame
+};
+
+This structure holds the metadata for a single frame.
+
 ---- ALGORITHMS ----
 
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
+/TODO: answer /
+
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
 >> structures) to reflect the frame Q no longer has?
 
+/TODO: answer /
+
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
+
+We grow the stack if retrieving a new page fails.
 
 ---- SYNCHRONIZATION ----
 
@@ -77,21 +164,30 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
+Our VM implementation is synchronized using simple locks to
+make certain operations atomic.
+
 >> B6: A page fault in process P can cause another process Q's frame
 >> to be evicted.  How do you ensure that Q cannot access or modify
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
+
+/TODO: answer /
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
+/TODO: answer /
+
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
 >> in user programs), or do you have a mechanism for "locking" frames
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
+
+/TODO: answer /
 
 ---- RATIONALE ----
 
@@ -102,6 +198,10 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> where your design falls along this continuum and why you chose to
 >> design it this way.
 
+We went with a locks for the frame table, the filesystem, and one
+for the page table of each process. This appeared to be the next
+easiest way after having one global lock for everyting.
+
 			 MEMORY MAPPED FILES
 			 ===================
 
@@ -111,14 +211,27 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct mapping {
+  struct hash_elem h_elem;  // Hash element for the mapping table
+  mapid_t map_id;           // mapping id
+  void *upage;              // userspace address this mapping is for
+  int num_pages;            // over how many pages the mapping stretches
+};
+
+This structure holds the metadata for a single mapping.
+
 ---- ALGORITHMS ----
 
 >> C2: Describe how memory mapped files integrate into your virtual
 >> memory subsystem.  Explain how the page fault and eviction
 >> processes differ between swap pages and other pages.
 
+/TODO: answer /
+
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
+
+/TODO: answer /
 
 ---- RATIONALE ----
 
@@ -128,6 +241,8 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> XXXXXXX
 >> that much of their implementation can be shared.  Explain why your
 >> implementation either does or does not share much of the code for
 >> the two situations.
+
+/TODO: answer /
 
 			   SURVEY QUESTIONS
 			   ================
