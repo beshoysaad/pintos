@@ -50,7 +50,7 @@ frame_alloc_and_check_out (bool zeroed)
   enum palloc_flags flags = PAL_USER | (zeroed ? PAL_ZERO : 0);
   struct frame *f = (struct frame*) malloc (sizeof(struct frame));
   ASSERT(f != NULL);
-  sema_init(&f->frame_sema,1);
+  sema_init (&f->frame_sema, 1);
   f->user_page = NULL;
   f->kernel_address = palloc_get_page (flags);
   if (f->kernel_address == NULL)
@@ -69,14 +69,14 @@ frame_alloc_and_check_out (bool zeroed)
 	      hash_next (&i);
 	    }
 	  struct frame *fr = hash_entry(hash_cur (&i), struct frame, h_elem);
-	  sema_down(&fr->frame_sema);
+	  sema_down (&fr->frame_sema);
 	  ASSERT(fr->user_page != NULL);
 	  void *uaddr = fr->user_page->user_address;
 	  uint32_t *user_pd = fr->user_page->pagedir;
 	  if (pagedir_is_accessed (user_pd, uaddr))
 	    {
 	      pagedir_set_accessed (user_pd, uaddr, false);
-	      sema_up(&fr->frame_sema);
+	      sema_up (&fr->frame_sema);
 	    }
 	  else
 	    {
@@ -88,7 +88,7 @@ frame_alloc_and_check_out (bool zeroed)
 		}
 	      else
 		{
-		  sema_up(&fr->frame_sema);
+		  sema_up (&fr->frame_sema);
 		}
 	    }
 	}
@@ -97,7 +97,7 @@ frame_alloc_and_check_out (bool zeroed)
     {
       sema_down (&frame_table_sema);
       ASSERT(hash_insert (&frame_table, &f->h_elem) == NULL);
-      sema_down(&f->frame_sema);
+      sema_down (&f->frame_sema);
       sema_up (&frame_table_sema);
       return f;
     }
@@ -115,7 +115,7 @@ frame_check_out (void *kaddr)
   if (e != NULL)
     {
       struct frame *fr = hash_entry(e, struct frame, h_elem);
-      sema_down(&fr->frame_sema);
+      sema_down (&fr->frame_sema);
       sema_up (&frame_table_sema);
       return fr;
     }
@@ -135,7 +135,7 @@ frame_check_in (void *kaddr)
   if (e != NULL)
     {
       struct frame *fr = hash_entry(e, struct frame, h_elem);
-      sema_up(&fr->frame_sema);
+      sema_up (&fr->frame_sema);
     }
   sema_up (&frame_table_sema);
 }
@@ -152,13 +152,13 @@ frame_free (void *kaddr, bool free_page)
   if (e != NULL)
     {
       struct frame *fr = hash_entry(e, struct frame, h_elem);
-      sema_down(&fr->frame_sema);
+      sema_down (&fr->frame_sema);
       hash_delete (&frame_table, &fr->h_elem);
       if (free_page)
 	{
 	  palloc_free_page (fr->kernel_address);
 	}
-      sema_up(&fr->frame_sema);
+      sema_up (&fr->frame_sema);
       free (fr);
     }
   sema_up (&frame_table_sema);

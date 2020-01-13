@@ -70,7 +70,10 @@ mapping_table_destroy (void)
 struct mapping*
 mapping_alloc (void *upage, struct file *f)
 {
-  ASSERT(f != NULL);
+  if (f == NULL)
+    {
+      return NULL;
+    }
   ASSERT(is_user_vaddr (upage));
   struct process *proc = thread_current ()->p;
   struct mapping *mp = (struct mapping*) malloc (sizeof(struct mapping));
@@ -84,7 +87,8 @@ mapping_alloc (void *upage, struct file *f)
       return NULL;
     }
   if (!load_segment (f, 0, upage, file_size, PGSIZE - (file_size % PGSIZE),
-		     true, false))
+  true,
+		     false))
     {
       free (mp);
       return NULL;

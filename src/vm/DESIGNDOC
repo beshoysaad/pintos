@@ -33,35 +33,36 @@ struct process
 {
   ...
   struct hash *page_table;
-  struct lock page_table_lock;
+  struct semaphore page_table_sema;
+  ...
 }
-
 Two members have been introduced to the process struct.
-One pointer for the page table and a lock for all operations
+One pointer for the page table and a semaphore for all operations
 on the page table.
+
 
 enum page_type
 {
   PAGE_TYPE_FILE, PAGE_TYPE_SWAP, PAGE_TYPE_ZERO
 };
-
 Indicates type of page (loaded from file, swap, or zeroed out)
+
 
 struct file_storage
 {
-  struct file *f;		// pointer to file from which the page is loaded
-  off_t size;			// size to load 
-  off_t offset;			// offset from which to load
+  struct file *f;       // pointer to the backing file 
+  off_t size;			// size to load from the file
+  off_t offset; 		// offset to read after
+  bool read_only;		// is this segment read-only?
 };
-
 Stores data about file backing this page.
+
 
 union page_storage
 {
   struct file_storage fs;			// holds info about file storage
   block_sector_t swap_sector;		// holds swap slot number
 };
-
 Holds information about the type of storage backing this page, either file info or swap slot number.
 
 struct page
@@ -74,15 +75,19 @@ struct page
   bool writable;					// is the page writable?
   union page_storage ps;			// info about page backing storage
 };
-
 Struct to hold data relevant to the page. Used in page table.
+
 
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
-Each page struct contains a pointer to the corresponding frame struct. 
+First we locate the page in the page hash table. This is trivial since
+the hash table is indexed by user virtual address of the page.
+Each page struct contains a pointer to the corresponding frame struct.
+The frame struct contains a pointer to the kernel virtual address of 
+the physical frame containing the page's data. 
 If the page is not present then the frame struct pointer is NULL, and 
 the page is swapped in from storage location.
 
@@ -100,13 +105,13 @@ only.
 >> A4: When two user processes both need a new frame at the same time,
 >> how are races avoided?
 
-Races are avoided by using a lock `frame_table_lock' on frame table
+Races are avoided by using a semaphore `frame_table_sema' on frame table
 operations during frame aquisitions. Only one process at a time can
 allocate a new frame. The function palloc_get_page internally uses 
-a bitmap and a lock to atomically return a frame to the caller.
+a bitmap and a lock to atomically return a frame to the caller. In 
+addition, each frame has its own semaphore that is downed once the frame is
+allocated and is upped by the code that is allocating the frame.
 
-Since each process has its own page table, page themselve do not
-need to be synchronized.
 
 ---- RATIONALE ----
 
@@ -143,11 +148,9 @@ if the accessed bit is true, we set it to false and move over to
 the next frame. If the accessed bit is already false, we try to evict 
 this frame by first clearing its page from the CPU page table, and 
 then writing its data to disk if it's a swap page or if its dirty
-bit is true. This can fail if the file we are trying to write to is 
-write-denied, in this case we repeat the process. After the write 
-is done we clear the dirty bit of the page. If the eviction is
-successful, we recycle the evicted frame for a new page. This is an
-implementation of the clock algorithm.
+bit is true. After the write is done we clear the dirty bit of the
+page. If the eviction is successful, we recycle the evicted frame
+for a new page. This is an implementation of the clock algorithm.
 
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
@@ -187,14 +190,18 @@ first, then if that succeeds we try to allocate a page.
 Before beginning the eviction process (writing to disk), we use the 
 function pagedir_clear_page to remove the page table entry of the 
 page being evicted from the CPU's page table. This means that no 
-user process can access that page anymore. 
+user process can access that page anymore. We also down the semaphore 
+associated with the page being evicted so that no other process can 
+fault it back in.
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
 >> cannot interfere by e.g. attempting to evict the frame while it is
 >> still being read in?
 
-/TODO: answer /
+Each frame has an associated semaphore that is downed whenever an operation
+is being done on that frame (e.g. being in the process of installing a 
+page from swap). This prevents scenarios like the one in the question.
 
 >> B8: Explain how you handle access to paged-out pages that occur
 >> during system calls.  Do you use page faults to bring in pages (as
@@ -207,6 +214,8 @@ pagedir_get_page. If that fails we try to get the needed page from
 disk storage (either file or swap). If that also fails we try to extend
 the stack to accomodate the user address. If none of that works then we 
 determine that the address is invalid and we terminate the process.
+Once we have the page we need, we down its semaphore so that it cannot be
+evicted until we are done with it.
 
 ---- RATIONALE ----
 
@@ -217,10 +226,12 @@ determine that the address is invalid and we terminate the process.
 >> where your design falls along this continuum and why you chose to
 >> design it this way.
 
-We went with locks for the frame table, the filesystem, and one
-for the page table of each process. This appeared to be the next
-easiest way after having one global lock for everyting, and it 
-doesn't totally prevent parallelism.
+We chose to have 1 semaphore per frame or page, in addition to a global semaphore 
+for the whole frame/page hash table. This way, when code is trying to modify the
+table itself by e.g. adding a new page or frame, it has to down the global semaphore. 
+The per-page or -frame semaphore helps avoid races between evicting and loading
+pages between memory and disk, and also helps with pinning user pages while kernel 
+code is using them. 
 
 			 MEMORY MAPPED FILES
 			 ===================
@@ -231,26 +242,34 @@ doesn't totally prevent parallelism.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct process {
+  ...
+  mapid_t mapping_counter;			// counter for mapping IDs in this process
+  struct hash *mapping_table;		// pointer to the mapping hash table
+  struct lock mapping_table_lock;	// lock for the mapping table
+};
+Members holding mapping infrastructure for this process
+
 struct mapping {
   struct hash_elem h_elem;  // Hash element for the mapping table
   mapid_t map_id;           // mapping id
   void *upage;              // userspace address this mapping is for
   int num_pages;            // over how many pages the mapping stretches
 };
-
 This structure holds the metadata for a single mapping.
 
 ---- ALGORITHMS ----
 
 >> C2: Describe how memory mapped files integrate into your virtual
->> memory subsystem.  Explain how the page fault and eviction
+>> memory subsystem. Explain how the page fault and eviction
 >> processes differ between swap pages and other pages.
 
 We treat memory mapped files like normal pages that are loaded from a 
 file. When a page is evicted it is written back to its file if it was 
-loaded from one, or to swap if it wasn't. An exception to that is 
-pages that are zeroed out and not dirty, which are just thrown away 
-and set to zero when they are swapped back in.
+loaded from one, or to swap if it wasn't. Exceptions to that are 
+pages that are zeroed out and not dirty, which are just thrown away
+and set to zero when they are swapped back in, and pages that are read-only,
+which are written to swap instead of their source file.
 
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
@@ -269,7 +288,7 @@ address exists, and the mapping process is aborted.
 >> the two situations.
 
 We use the function load_segment to load both executables and memory 
-mapped files, so the code is shared.
+mapped files, so the code is completely shared.
 
 			   SURVEY QUESTIONS
 			   ================

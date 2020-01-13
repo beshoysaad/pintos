@@ -23,7 +23,7 @@ page_deallocate (struct hash_elem *e, void *aux UNUSED)
 {
   struct page *p = hash_entry(e, struct page, h_elem);
   ASSERT(p != NULL);
-  sema_down(&p->page_sema);
+  sema_down (&p->page_sema);
   if (p->f != NULL)
     {
       frame_free (p->f->kernel_address, false);
@@ -32,7 +32,7 @@ page_deallocate (struct hash_elem *e, void *aux UNUSED)
     {
       swap_free (p->ps.swap_sector);
     }
-  sema_up(&p->page_sema);
+  sema_up (&p->page_sema);
   free (p);
 }
 
@@ -93,7 +93,7 @@ bool writable)
   pg->f = NULL;
   pg->pagedir = pagedir;
   memset (&pg->ps, 0, sizeof(union page_storage));
-  sema_init(&pg->page_sema, 1);
+  sema_init (&pg->page_sema, 1);
   sema_down (&proc->page_table_sema);
   if (hash_insert (proc->page_table, &pg->h_elem) != NULL) // Page already exists
     {
@@ -101,7 +101,7 @@ bool writable)
       free (pg);
       return NULL;
     }
-  sema_down(&pg->page_sema);
+  sema_down (&pg->page_sema);
   sema_up (&proc->page_table_sema);
   return pg;
 }
@@ -123,7 +123,7 @@ page_free (void *upage)
   if (e != NULL)
     {
       struct page *g = hash_entry(e, struct page, h_elem);
-      sema_down(&g->page_sema);
+      sema_down (&g->page_sema);
       hash_delete (proc->page_table, &g->h_elem);
       if (g->f != NULL)
 	{
@@ -133,7 +133,7 @@ page_free (void *upage)
 	{
 	  swap_free (g->ps.swap_sector);
 	}
-      sema_up(&g->page_sema);
+      sema_up (&g->page_sema);
       free (g);
     }
   sema_up (&proc->page_table_sema);
@@ -156,7 +156,7 @@ page_check_out (void *upage)
   if (e != NULL)
     {
       struct page *pg = hash_entry(e, struct page, h_elem);
-      sema_down(&pg->page_sema);
+      sema_down (&pg->page_sema);
       sema_up (&proc->page_table_sema);
       return pg;
     }
@@ -184,7 +184,7 @@ page_check_in (void *upage)
   if (e != NULL)
     {
       struct page *pg = hash_entry(e, struct page, h_elem);
-      sema_up(&pg->page_sema);
+      sema_up (&pg->page_sema);
     }
   sema_up (&proc->page_table_sema);
 }
@@ -202,10 +202,11 @@ page_evict (void *uaddr)
     {
       return false;
     }
-  if (pg->f == NULL) {
-      page_check_in(uaddr);
+  if (pg->f == NULL)
+    {
+      page_check_in (uaddr);
       return false;
-  }
+    }
   uint32_t *user_pd = pg->pagedir;
   pagedir_clear_page (user_pd, uaddr);
   if (pg->type == PAGE_TYPE_SWAP)
