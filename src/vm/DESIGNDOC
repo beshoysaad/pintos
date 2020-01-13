@@ -40,18 +40,60 @@ Two members have been introduced to the process struct.
 One pointer for the page table and a lock for all operations
 on the page table.
 
+enum page_type
+{
+  PAGE_TYPE_FILE, PAGE_TYPE_SWAP, PAGE_TYPE_ZERO
+};
+
+Indicates type of page (loaded from file, swap, or zeroed out)
+
+struct file_storage
+{
+  struct file *f;		// pointer to file from which the page is loaded
+  off_t size;			// size to load 
+  off_t offset;			// offset from which to load
+};
+
+Stores data about file backing this page.
+
+union page_storage
+{
+  struct file_storage fs;			// holds info about file storage
+  block_sector_t swap_sector;		// holds swap slot number
+};
+
+Holds information about the type of storage backing this page, either file info or swap slot number.
+
+struct page
+{
+  struct hash_elem h_elem;			// element of hash table
+  void *user_address;				// user page virtual address
+  uint32_t *pagedir;				// page directory
+  struct frame *f;					// pointer to associated frame struct or NULL
+  enum page_type type;				// page type
+  bool writable;					// is the page writable?
+  union page_storage ps;			// info about page backing storage
+};
+
+Struct to hold data relevant to the page. Used in page table.
+
 ---- ALGORITHMS ----
 
 >> A2: In a few paragraphs, describe your code for locating the frame,
 >> if any, that contains the data of a given page.
 
-/TODO: answer /
+Each page struct contains a pointer to the corresponding frame struct. 
+If the page is not present then the frame struct pointer is NULL, and 
+the page is swapped in from storage location.
 
 >> A3: How does your code coordinate accessed and dirty bits between
 >> kernel and user virtual addresses that alias a single frame, or
 >> alternatively how do you avoid the issue?
 
-/TODO: answer /
+We update the dirty and accessed bits of user pages when accessed from 
+kernel code. This only happens during system calls. When deciding which
+page to evict, we rely on the dirty and accessed bits of the user page
+only.
 
 ---- SYNCHRONIZATION ----
 
@@ -60,7 +102,9 @@ on the page table.
 
 Races are avoided by using a lock `frame_table_lock' on frame table
 operations during frame aquisitions. Only one process at a time can
-allocate a new frame.
+allocate a new frame. The function palloc_get_page internally uses 
+a bitmap and a lock to atomically return a frame to the caller.
+
 Since each process has its own page table, page themselve do not
 need to be synchronized.
 
@@ -70,7 +114,13 @@ need to be synchronized.
 >> representing virtual-to-physical mappings?
 
 Since pages need to be handled on a per process basis, the best
-solution was to store the information in the process struct.
+solution was to store the information in the process struct. In
+addition, keeping track of the associated frame inside the page 
+struct and the associated page inside the frame struct makes it 
+trivial to extract physical to virtual mappings and vice versa.
+Also, using hash tables to store frames and pages makes it 
+efficient to retrieve any page or frame using their user/kernel
+virtual address
 
 		       PAGING TO AND FROM DISK
 		       =======================
@@ -81,81 +131,42 @@ solution was to store the information in the process struct.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-enum page_type { PAGE_TYPE_FILE, PAGE_TYPE_SWAP, PAGE_TYPE_ZERO };
-
-describes the type of the current page. It either refers to a
-file, to a memory section on the swap partition, or to a section
-of ZERO'ed bytes.
-
-struct file_storage
-{
-  struct file *f;
-  off_t size;
-  off_t offset;
-};
-
-This structure holds information about the file the page refers
-to (in case of type `PAGE_TYPE_FILE'). A pointer to the file
-struct, the offset of the filecontents that this page holds,
-and in case that the contents do not fill the whole page, it
-also stores the size of actual data in the page.
-
-union page_storage
-{
-  struct file_storage fs;
-  block_sector_t swap_sector;
-};
-
-For convinience, we create a union over the `file_storage' and
-`block_sector' structs, as only one of those is needed at a time.
-Which one is determined by the type of the table.
-
-struct page
-{
-  struct hash_elem h_elem;  // Hash element for the page table
-  void *user_address;       // userspace address this page referrs to
-  uint32_t *pagedir;        // pointer to the page directory
-  struct frame *f;          // page frame in use
-  enum page_type type;      // type of this page
-  bool writable;            // whether this pages contents can modified
-  union page_storage ps;
-};
-
-This structure holds the metadata for a single page.
-
-static struct hash frame_table;
-static struct lock frame_table_lock;
-
-These are the global frame table hash table and a lock
-for all operations on the frame table.
-
-struct frame
-{
-  struct hash_elem h_elem;  // Hash element for the frame table
-  void *kernel_address;     // kernelspace address of the frame
-  struct page *user_page;   // pointer to the page lying in the frame
-};
-
-This structure holds the metadata for a single frame.
+Not applicable
 
 ---- ALGORITHMS ----
 
 >> B2: When a frame is required but none is free, some frame must be
 >> evicted.  Describe your code for choosing a frame to evict.
 
-/TODO: answer /
+We loop through all the frames in the frame table. For every frame, 
+if the accessed bit is true, we set it to false and move over to 
+the next frame. If the accessed bit is already false, we try to evict 
+this frame by first clearing its page from the CPU page table, and 
+then writing its data to disk if it's a swap page or if its dirty
+bit is true. This can fail if the file we are trying to write to is 
+write-denied, in this case we repeat the process. After the write 
+is done we clear the dirty bit of the page. If the eviction is
+successful, we recycle the evicted frame for a new page. This is an
+implementation of the clock algorithm.
 
 >> B3: When a process P obtains a frame that was previously used by a
 >> process Q, how do you adjust the page table (and any other data
 >> structures) to reflect the frame Q no longer has?
 
-/TODO: answer /
+In the page table of process Q, we update the frame pointer of the 
+evicted page to point to NULL. We also use the function 
+pagedir_clear_page to remove the entry associating Q's page to the 
+frame. The frame's page pointer now points to P's page, and P's page's 
+frame pointer now points to the frame.
 
 >> B4: Explain your heuristic for deciding whether a page fault for an
 >> invalid virtual address should cause the stack to be extended into
 >> the page that faulted.
 
-We grow the stack if retrieving a new page fails.
+If the fault address's page address doesn't exceed the maximum stack size 
+(1 MB) below PHYS_BASE and the faulting address is not below the stack 
+pointer by more than 32 bytes (to allow PUSHA instructions), we allow 
+the stack to grow.
 
 ---- SYNCHRONIZATION ----
 
@@ -164,15 +175,19 @@ We grow the stack if retrieving a new page fails.
 >> textbook for an explanation of the necessary conditions for
 >> deadlock.)
 
-Our VM implementation is synchronized using simple locks to
-make certain operations atomic.
+In order for deadlock to occur, circular lock dependency must be present.
+This is not the case in our code, as we always try to allocate a frame 
+first, then if that succeeds we try to allocate a page. 
 
 >> B6: A page fault in process P can cause another process Q's frame
 >> to be evicted.  How do you ensure that Q cannot access or modify
 >> the page during the eviction process?  How do you avoid a race
 >> between P evicting Q's frame and Q faulting the page back in?
 
-/TODO: answer /
+Before beginning the eviction process (writing to disk), we use the 
+function pagedir_clear_page to remove the page table entry of the 
+page being evicted from the CPU's page table. This means that no 
+user process can access that page anymore. 
 
 >> B7: Suppose a page fault in process P causes a page to be read from
 >> the file system or swap.  How do you ensure that a second process Q
@@ -187,7 +202,11 @@ make certain operations atomic.
 >> into physical memory, or do you use some other design?  How do you
 >> gracefully handle attempted accesses to invalid virtual addresses?
 
-/TODO: answer /
+First we try to translate the user address into kernel address using 
+pagedir_get_page. If that fails we try to get the needed page from 
+disk storage (either file or swap). If that also fails we try to extend
+the stack to accomodate the user address. If none of that works then we 
+determine that the address is invalid and we terminate the process.
 
 ---- RATIONALE ----
 
@@ -198,9 +217,10 @@ make certain operations atomic.
 >> where your design falls along this continuum and why you chose to
 >> design it this way.
 
-We went with a locks for the frame table, the filesystem, and one
+We went with locks for the frame table, the filesystem, and one
 for the page table of each process. This appeared to be the next
-easiest way after having one global lock for everyting.
+easiest way after having one global lock for everyting, and it 
+doesn't totally prevent parallelism.
 
 			 MEMORY MAPPED FILES
 			 ===================
@@ -226,12 +246,18 @@ This structure holds the metadata for a single mapping.
 >> memory subsystem.  Explain how the page fault and eviction
 >> processes differ between swap pages and other pages.
 
-/TODO: answer /
+We treat memory mapped files like normal pages that are loaded from a 
+file. When a page is evicted it is written back to its file if it was 
+loaded from one, or to swap if it wasn't. An exception to that is 
+pages that are zeroed out and not dirty, which are just thrown away 
+and set to zero when they are swapped back in.
 
 >> C3: Explain how you determine whether a new file mapping overlaps
 >> any existing segment.
 
-/TODO: answer /
+When we try to insert a new page into the page table, we observe the 
+return value. If it's not NULL, then a page of the same user virtual 
+address exists, and the mapping process is aborted.
 
 ---- RATIONALE ----
 
@@ -242,7 +268,8 @@ This structure holds the metadata for a single mapping.
 >> implementation either does or does not share much of the code for
 >> the two situations.
 
-/TODO: answer /
+We use the function load_segment to load both executables and memory 
+mapped files, so the code is shared.
 
 			   SURVEY QUESTIONS
 			   ================
