@@ -59,8 +59,7 @@ static uint32_t *
 lookup_page (uint32_t *pd, const void *vaddr, bool create)
 {
   uint32_t *pt, *pde;
-
-  ASSERT (pd != NULL);
+  ASSERT(pd != NULL);
 
   /* Shouldn't create new kernel virtual mappings. */
   ASSERT (!create || is_user_vaddr (vaddr));

@@ -22,15 +22,9 @@ mapping_deallocate (struct hash_elem *e, void *aux UNUSED)
   ASSERT(m != NULL);
   for (int i = 0; i < m->num_pages; i++)
     {
-      struct page *p = page_get (m->upage + (i * PGSIZE));
-      ASSERT(p != NULL);
-      if (p->f != NULL)
-	{
-	  ASSERT(frame_evict (p->f) == true);
-	}
-      page_free (p->user_address);
+      page_evict (m->upage + (i * PGSIZE));
+      page_free (m->upage + (i * PGSIZE));
     }
-
   free (m);
 }
 
@@ -77,18 +71,20 @@ struct mapping*
 mapping_alloc (void *upage, struct file *f)
 {
   ASSERT(f != NULL);
+  ASSERT(is_user_vaddr (upage));
   struct process *proc = thread_current ()->p;
   struct mapping *mp = (struct mapping*) malloc (sizeof(struct mapping));
   ASSERT(mp != NULL);
-  lock_acquire(&lock_file_sys);
+  lock_acquire (&lock_file_sys);
   off_t file_size = file_length (f);
-  lock_release(&lock_file_sys);
+  lock_release (&lock_file_sys);
   if (file_size == 0)
     {
       free (mp);
       return NULL;
     }
-  if (!load_segment (f, 0, upage, file_size, PGSIZE - (file_size % PGSIZE), true))
+  if (!load_segment (f, 0, upage, file_size, PGSIZE - (file_size % PGSIZE),
+		     true, false))
     {
       free (mp);
       return NULL;
@@ -111,21 +107,15 @@ mapping_free (mapid_t map_id)
   m.map_id = map_id;
   lock_acquire (&proc->mapping_table_lock);
   e = hash_delete (proc->mapping_table, &m.h_elem);
-  lock_release (&proc->mapping_table_lock);
   if (e != NULL)
     {
       struct mapping *mp = hash_entry(e, struct mapping, h_elem);
       for (int i = 0; i < mp->num_pages; i++)
 	{
-	  struct page *p = page_get (mp->upage + (i * PGSIZE));
-	  ASSERT(p != NULL);
-	  if (p->f != NULL)
-	    {
-	      ASSERT(frame_evict (p->f) == true);
-	    }
-	  page_free (p->user_address);
+	  page_evict (mp->upage + (i * PGSIZE));
+	  page_free (mp->upage + (i * PGSIZE));
 	}
-
       free (mp);
     }
+  lock_release (&proc->mapping_table_lock);
 }

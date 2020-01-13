@@ -162,11 +162,11 @@ page_fault (struct intr_frame *f)
 
   if (user && not_present)
     {
-      if (retrieve_page (fault_addr))
+      if (retrieve_page (fault_addr, false))
 	{
 	  return;
 	}
-      if (grow_stack (fault_addr, f->esp))
+      if (grow_stack (fault_addr, f->esp, false))
 	{
 	  return;
 	}

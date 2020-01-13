@@ -22,6 +22,7 @@
 #include "vm/page.h"
 #include "vm/swap.h"
 #include "vm/mapping.h"
+#include "bitmap.h"
 
 #define STACK_SIZE_LIMIT	(1024 * 1024)
 
@@ -106,7 +107,7 @@ process_execute (const char *file_name)
   list_push_front (&process_list, &p->elem);
 
   // Init page table
-  lock_init (&p->page_table_lock);
+  sema_init (&p->page_table_sema, 1);
   if (!page_table_init (&p->page_table))
     {
       free (p->list_file_desc);
@@ -560,7 +561,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
               if (!load_segment (file, file_page, (void *) mem_page,
-                                 read_bytes, zero_bytes, writable))
+                                 read_bytes, zero_bytes, writable, true))
                 goto done;
             }
           else
@@ -653,7 +654,7 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
    or disk read error occurs. */
 bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
-              uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
+              uint32_t read_bytes, uint32_t zero_bytes, bool writable, bool read_only)
 {
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (ofs % PGSIZE == 0);
@@ -672,7 +673,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      struct page *pg = page_alloc(upage, thread_current()->pagedir, PAGE_TYPE_FILE, writable);
+      struct page *pg = page_alloc_and_check_out(upage, thread_current()->pagedir, PAGE_TYPE_FILE, writable);
       if (pg == NULL)
         return false;
 
@@ -686,7 +687,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	  pg->ps.fs.f = file;
 	  pg->ps.fs.size = page_read_bytes;
 	  pg->ps.fs.offset = ofs;
+	  pg->ps.fs.read_only = read_only;
 	}
+      page_check_in(upage);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -704,30 +707,34 @@ setup_stack (void **esp)
 {
   uint8_t *upage = ((uint8_t*) PHYS_BASE) - PGSIZE;
 
-  struct frame *f = frame_alloc (true);
+  struct frame *f = frame_alloc_and_check_out (true);
 
-  if (f == NULL)
-    {
-      return false;
-    }
+  ASSERT(f != NULL);
 
-  struct page *pg = page_alloc (upage, thread_current()->pagedir, PAGE_TYPE_ZERO, true);
+  void *kaddr = f->kernel_address;
+
+  struct page *pg = page_alloc_and_check_out (upage, thread_current()->pagedir, PAGE_TYPE_ZERO, true);
 
   if (pg == NULL)
     {
-      frame_free(f->kernel_address);
+      frame_check_in(kaddr);
+      frame_free(kaddr, true);
       return false;
     }
 
   if (install_page (f, pg, true))
     {
+      page_check_in(upage);
+      frame_check_in(kaddr);
       *esp = PHYS_BASE;
       return true;
     }
   else
     {
-      page_free (pg->user_address);
-      frame_free(f->kernel_address);
+      page_check_in(upage);
+      frame_check_in(kaddr);
+      page_free (upage);
+      frame_free(kaddr, true);
       return false;
     }
 }
@@ -763,65 +770,88 @@ install_page (struct frame *f, struct page *p, bool writable)
 }
 
 bool
-grow_stack (const void *fault_addr, void *esp)
+grow_stack (const void *fault_addr, void *esp, bool lock_in)
 {
-  if ((PHYS_BASE <= pg_round_down (fault_addr) + STACK_SIZE_LIMIT)
-      && (esp <= fault_addr + 32))
+  void *uaddr = pg_round_down (fault_addr);
+  if ((PHYS_BASE <= uaddr + STACK_SIZE_LIMIT) && (esp <= fault_addr + 32))
     {
       // Grow stack
+      struct frame *fr = frame_alloc_and_check_out (true);
+      ASSERT(fr != NULL);
+      void *kaddr = fr->kernel_address;
 
-      struct page *pg = page_alloc (pg_round_down (fault_addr),
-				    thread_current ()->pagedir, PAGE_TYPE_ZERO,
-				    true);
+      struct page *pg = page_alloc_and_check_out (uaddr,
+						  thread_current ()->pagedir,
+						  PAGE_TYPE_ZERO, true);
       if (pg == NULL)
 	{
+	  frame_check_in (kaddr);
+	  frame_free (kaddr, true);
 	  return false;
 	}
-      struct frame *fr = frame_alloc (true);
-      ASSERT(fr != NULL);
-      return install_page(fr, pg, true);
+
+      if (install_page (fr, pg, true))
+	{
+	  if (!lock_in)
+	    {
+	      page_check_in (uaddr);
+	    }
+	  frame_check_in (kaddr);
+	  return true;
+	}
+      else
+	{
+	  page_check_in (uaddr);
+	  frame_check_in (kaddr);
+	  page_free (uaddr);
+	  frame_free (kaddr, true);
+	  return false;
+	}
     }
   return false;
 }
 
 bool
-retrieve_page (const void *fault_addr)
+retrieve_page (const void *fault_addr, bool lock_in)
 {
-
-  struct page *p = page_get (pg_round_down (fault_addr));
+  ASSERT(is_user_vaddr(fault_addr));
+  void *uaddr = pg_round_down (fault_addr);
+  struct frame *fr = frame_alloc_and_check_out (false);
+  ASSERT(fr != NULL);
+  void *kaddr = fr->kernel_address;
+  struct page *p = page_check_out(uaddr);
   if (p == NULL)
     {
+      frame_check_in(kaddr);
+      frame_free(kaddr, true);
       return false;
     }
-
-  struct frame *fr = frame_alloc (false);
-  ASSERT(fr != NULL);
-
   // Try to load page from disk
   switch (p->type)
     {
     case PAGE_TYPE_FILE:
       {
-	lock_acquire(&lock_file_sys);
-	off_t read_size = file_read_at (p->ps.fs.f, fr->kernel_address,
+	lock_acquire (&lock_file_sys);
+	off_t read_size = file_read_at (p->ps.fs.f, kaddr,
 					p->ps.fs.size, p->ps.fs.offset);
-	lock_release(&lock_file_sys);
+	lock_release (&lock_file_sys);
 	ASSERT(read_size == p->ps.fs.size);
 	if (p->ps.fs.size < PGSIZE)
 	  {
-	    memset ((uint8_t*) fr->kernel_address + p->ps.fs.size, 0,
+	    memset ((uint8_t*) kaddr + p->ps.fs.size, 0,
 	    PGSIZE - p->ps.fs.size);
 	  }
 	break;
       }
     case PAGE_TYPE_SWAP:
       {
-	swap_read (p->ps.swap_sector, fr->kernel_address);
+	swap_read (p->ps.swap_sector, kaddr);
+	p->ps.swap_sector = BITMAP_ERROR;
 	break;
       }
     case PAGE_TYPE_ZERO:
       {
-	memset (fr->kernel_address, 0, PGSIZE);
+	memset (kaddr, 0, PGSIZE);
 	break;
       }
     default:
@@ -829,7 +859,21 @@ retrieve_page (const void *fault_addr)
 	ASSERT(false);
       }
     }
-
-  return install_page (fr, p, p->writable);
+  if (install_page (fr, p, p->writable))
+    {
+      if (!lock_in)
+	{
+	  page_check_in (uaddr);
+	}
+      frame_check_in (kaddr);
+      return true;
+    }
+  else
+    {
+      page_check_in(uaddr);
+      frame_check_in(kaddr);
+      frame_free (kaddr, true);
+      return false;
+    }
 }
 

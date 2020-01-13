@@ -10,6 +10,7 @@
 #include "threads/thread.h"
 #include "userprog/process.h"
 #include "bitmap.h"
+#include "threads/vaddr.h"
 #include "swap.h"
 
 struct block *swap_block = NULL;
@@ -29,12 +30,17 @@ swap_table_init (void)
 block_sector_t
 swap_write (void *kaddr)
 {
-  ASSERT(kaddr != NULL);
+  ASSERT(is_kernel_vaddr (kaddr));
   block_sector_t s = BITMAP_ERROR;
   lock_acquire (&swap_table_lock);
   s = bitmap_scan_and_flip (swap_bm, 0, 8, false);
   lock_release (&swap_table_lock);
-  ASSERT(s != BITMAP_ERROR);
+  if (s == BITMAP_ERROR)
+    {
+      PANIC("Out of swap slots");
+    }
+  ASSERT(s < (block_size (swap_block) - 7));
+  ASSERT((s * BLOCK_SECTOR_SIZE) % PGSIZE == 0);
   for (int i = 0; i < 8; i++)
     {
       block_write (swap_block, s + i, kaddr + (i * BLOCK_SECTOR_SIZE));
@@ -46,7 +52,7 @@ void
 swap_read (block_sector_t sector, void *kaddr)
 {
   ASSERT(sector < (block_size (swap_block) - 7));
-  ASSERT(kaddr != NULL);
+  ASSERT(is_kernel_vaddr (kaddr));
   ASSERT(bitmap_all (swap_bm, sector, 8));
   for (int i = 0; i < 8; i++)
     {

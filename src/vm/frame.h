@@ -16,17 +16,22 @@ struct frame
   struct hash_elem h_elem; /* Hash table element */
   void *kernel_address; /* Kernel virtual address of this frame */
   struct page *user_page;
+  struct semaphore frame_sema;
 };
 
 void
 frame_table_init (void);
 
 struct frame*
-frame_alloc (bool zeroed);
+frame_alloc_and_check_out (bool zeroed);
 
 void
-frame_free (void *kaddr);
+frame_free (void *kaddr, bool free_page);
 
-bool frame_evict (struct frame *f);
+struct frame*
+frame_check_out (void *kaddr);
+
+void
+frame_check_in (void *kaddr);
 
 #endif /* SRC_VM_FRAME_H_ */

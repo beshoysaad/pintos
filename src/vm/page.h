@@ -23,6 +23,7 @@ struct file_storage
   struct file *f;
   off_t size;
   off_t offset;
+  bool read_only;
 };
 
 union page_storage
@@ -35,6 +36,7 @@ struct page
 {
   struct hash_elem h_elem;
   void *user_address;
+  struct semaphore page_sema;
   uint32_t *pagedir;
   struct frame *f;
   enum page_type type;
@@ -49,12 +51,22 @@ void
 page_table_destroy (void);
 
 struct page*
-page_alloc (void *upage, uint32_t *pd, enum page_type type, bool writable);
+page_alloc_and_check_out (void *upage, uint32_t *pd, enum page_type type,
+bool writable);
 
 void
 page_free (void *uaddr);
 
 struct page*
-page_get (void *upage);
+page_check_out (void *upage);
+
+void
+page_check_in (void *upage);
+
+bool
+page_evict (void *uaddr);
+
+bool
+page_is_writable (void *upage);
 
 #endif /* SRC_VM_PAGE_H_ */

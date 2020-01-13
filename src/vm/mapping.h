@@ -12,7 +12,8 @@
 #include "lib/user/syscall.h"
 #include "filesys/file.h"
 
-struct mapping {
+struct mapping
+{
   struct hash_elem h_elem;
   mapid_t map_id;
   void *upage;
