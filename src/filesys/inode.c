@@ -3,9 +3,11 @@
 #include <debug.h>
 #include <round.h>
 #include <string.h>
+#include "filesys/bcache.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
@@ -57,11 +59,17 @@ byte_to_sector (const struct inode *inode, off_t pos)
    returns the same `struct inode'. */
 static struct list open_inodes;
 
+/* Lock used for the buffer cache. */
+static struct lock bcache_lock;
+
 /* Initializes the inode module. */
 void
 inode_init (void) 
 {
   list_init (&open_inodes);
+
+  /* Initialize the buffer cache lock */
+  lock_init (&bcache_lock);
 }
 
 /* Initializes an inode with LENGTH bytes of data and
@@ -202,7 +210,6 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 {
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
-  uint8_t *bounce = NULL;
 
   while (size > 0) 
     {
@@ -220,31 +227,33 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
+      /* Get the corresponding cache buffer for this block. */
+      lock_acquire (&bcache_lock);
+      struct bcache_entry *bce = bcache_get_entry (fs_device, sector_idx);
+      if (bce != NULL)
         {
-          /* Read full sector directly into caller's buffer. */
-          block_read (fs_device, sector_idx, buffer + bytes_read);
+          /* Partially copy into caller's buffer. */
+          memcpy (buffer + bytes_read, bce -> buffer + sector_ofs, chunk_size);
         }
-      else 
+      else
         {
-          /* Read sector into bounce buffer, then partially copy
+          /* Get a new bcache entry */
+          bce = bcache_alloc_entry ();
+          bce -> device = fs_device;
+          bce -> sector = sector_idx;
+
+          /* Read sector into bcache buffer, then partially copy
              into caller's buffer. */
-          if (bounce == NULL) 
-            {
-              bounce = malloc (BLOCK_SECTOR_SIZE);
-              if (bounce == NULL)
-                break;
-            }
-          block_read (fs_device, sector_idx, bounce);
-          memcpy (buffer + bytes_read, bounce + sector_ofs, chunk_size);
+          block_read (fs_device, sector_idx, bce -> buffer);
+          memcpy (buffer + bytes_read, bce -> buffer + sector_ofs, chunk_size);
         }
+      lock_release (&bcache_lock);
       
       /* Advance. */
       size -= chunk_size;
       offset += chunk_size;
       bytes_read += chunk_size;
     }
-  free (bounce);
 
   return bytes_read;
 }

@@ -6,6 +6,7 @@
 #include "filesys/free-map.h"
 #include "filesys/inode.h"
 #include "filesys/directory.h"
+#include "filesys/bcache.h"
 
 /* Partition that contains the file system. */
 struct block *fs_device;
@@ -23,6 +24,9 @@ filesys_init (bool format)
 
   inode_init ();
   free_map_init ();
+
+  /* Initialize buffer cache system. */
+  bcache_init ();
 
   if (format) 
     do_format ();
