@@ -1,4 +1,5 @@
 #include "devices/block.h"
+#include "devices/timer.h"
 #include "filesys/bcache.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
@@ -13,20 +14,24 @@ struct bcache_entry
     struct block      *device;
     block_sector_t    sector;
     uint8_t           *buffer;
-    unsigned          dirty;
-    unsigned          used;
+    bool              dirty;
+    bool              used;
   };
 
 /* Declare buffer cache policy functions */
 static struct bcache_entry *find_entry (struct block *, block_sector_t);
 static struct bcache_entry *alloc_entry (void);
 static void use_entry (struct bcache_entry *);
+static void thread_write_behind (void *);
 
 /* List holding all Buffer Cache Entries */
 static struct list bcache_entry_list;
 
 /* Lock used for the buffer cache. */
 static struct lock bcache_lock;
+
+/* Indicator if the Write-Behind thread should stop. */
+static bool bcache_stop_write_behind;
 
 /* Initializes buffer cache system */
 void
@@ -37,22 +42,38 @@ bcache_init ()
 
   /* Initialize the buffer cache lock */
   lock_init (&bcache_lock);
+
+  /* Start the Write-Behind thread. */
+  bcache_stop_write_behind = false;
+  thread_create ("bcache-write-behind",
+      PRI_MIN, thread_write_behind, NULL);
 }
 
 /* Uninitializes buffer cache system */
 void
 bcache_done ()
 {
+  /* Stop the Write-Behind thread */
+  bcache_stop_write_behind = true;
+
   /* Free all list bcache entries */
+  lock_acquire (&bcache_lock);
   while (!list_empty (&bcache_entry_list))
     {
       struct list_elem *e = list_front (&bcache_entry_list);
-      struct bcache_entry *bce =  list_entry (e, struct bcache_entry, elem);
+      struct bcache_entry *bce =  list_entry (
+          e, struct bcache_entry, elem);
+
+      /* Make sure the content is written to
+         disk if it is dirty. */
+      if (bce -> dirty)
+        block_write (bce -> device, bce -> sector, bce -> buffer);
 
       list_remove (e);
       free (bce -> buffer);
       free (bce);
     }
+  lock_release (&bcache_lock);
 }
 
 /* Reads a block through the buffer cache system */
@@ -74,7 +95,7 @@ bcache_read (struct block *device, block_sector_t sector,
       bce = alloc_entry ();
       bce -> device = device;
       bce -> sector = sector;
-      bce -> dirty = 0;
+      bce -> dirty = false;
 
       /* Read sector into bcache buffer. */
       block_read (device, sector, bce -> buffer);
@@ -88,9 +109,7 @@ bcache_read (struct block *device, block_sector_t sector,
     }
 
   /* Partially copy into caller's buffer. */
-  const void *src = bce -> buffer + offset;
-  void *dst = buffer;
-  memcpy (dst, src, size);
+  memcpy (buffer, bce -> buffer + offset, size);
 
   lock_release (&bcache_lock);
   return cache_hit;
@@ -115,7 +134,7 @@ bcache_write (struct block *device, block_sector_t sector,
       bce = alloc_entry ();
       bce -> device = device;
       bce -> sector = sector;
-      bce -> dirty = 1;
+      bce -> dirty = true;
 
       /* Read sector into bcache buffer. */
       block_read (device, sector, bce -> buffer);
@@ -125,24 +144,44 @@ bcache_write (struct block *device, block_sector_t sector,
       cache_hit = true;
 
       /* Mark the entry as dirty and recently used. */
-      bce -> dirty = 1;
+      bce -> dirty = true;
       use_entry (bce);
     }
 
   /* Partially copy from caller's buffer. */
-  const void *src = buffer;
-  void *dst = bce -> buffer + offset;
-  memcpy (dst, src, size);
-
-  lock_release (&bcache_lock);
-  lock_acquire (&bcache_lock);
-
-  /* Write bcache buffer back to block sector. */
-  block_write (device, sector, bce -> buffer);
-  bce -> dirty = 0;
+  memcpy (bce -> buffer + offset, buffer, size);
 
   lock_release (&bcache_lock);
   return cache_hit;
+}
+
+
+/* Thread function that periodically loops through
+   the buffer cache entries and write dirty ones
+   back to disk. */
+static void
+thread_write_behind (void *aux UNUSED)
+{
+  struct list_elem *e;
+
+  do
+    {
+      timer_sleep (1000);  /* 1000 ticks. */
+
+      lock_acquire (&bcache_lock);
+      for (e = list_begin (&bcache_entry_list);
+          e != list_end (&bcache_entry_list); e = list_next (e))
+        {
+          struct bcache_entry *bce =  list_entry (
+              e, struct bcache_entry, elem);
+
+          /* Write behind if dirty. */
+          if (bce -> dirty)
+            block_write (bce -> device, bce -> sector, bce -> buffer);
+        }
+      lock_release (&bcache_lock);
+    }
+  while (!bcache_stop_write_behind);
 }
 
 
@@ -200,10 +239,19 @@ alloc_entry (void)
           bcache_policy_ptr = list_next_circular (
               &bcache_entry_list, bcache_policy_ptr);
 
-          if (bce -> used == 0)
-            return bce;
+          if (bce -> used == false)
+            {
+              /* Write behind if dirty. */
+              if (bce -> dirty)
+                block_write (bce -> device, bce -> sector, bce -> buffer);
+
+              return bce;
+            }
           else
-            bce -> used = 0;
+            {
+              bce -> used = false;
+              continue;
+            }
         }
       while (bcache_policy_ptr != start);
 
@@ -215,7 +263,7 @@ alloc_entry (void)
       /* Just allocate and initialize a new entry */
       struct bcache_entry *bce = malloc (sizeof *bce);
       bce -> buffer = malloc (BLOCK_SECTOR_SIZE);
-      bce -> used = 0;
+      bce -> used = false;
 
       /* Insert the entry into the global list of entries */
       if (!list_empty (&bcache_entry_list))
@@ -237,5 +285,5 @@ static void
 use_entry (struct bcache_entry *bce)
 {
   /* Set the used bit of that entry. */
-  bce -> used = 1;
+  bce -> used = true;
 }
