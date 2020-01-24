@@ -12,7 +12,7 @@ struct bcache_entry
     struct list_elem  elem;
     struct block      *device;
     block_sector_t    sector;
-    uint8_t*          *buffer;
+    uint8_t           *buffer;
     unsigned          dirty;
     unsigned          used;
   };
@@ -90,7 +90,6 @@ bcache_read (struct block *device, block_sector_t sector,
   /* Partially copy into caller's buffer. */
   const void *src = bce -> buffer + offset;
   void *dst = buffer;
-  printf ("read: copy %d bytes from %p to %p\n", size, src, dst);
   memcpy (dst, src, size);
 
   lock_release (&bcache_lock);
@@ -133,7 +132,6 @@ bcache_write (struct block *device, block_sector_t sector,
   /* Partially copy from caller's buffer. */
   const void *src = buffer;
   void *dst = bce -> buffer + offset;
-  printf ("write: copy %d bytes from %p to %p\n", size, src, dst);
   memcpy (dst, src, size);
 
   lock_release (&bcache_lock);
@@ -170,10 +168,7 @@ find_entry (struct block *device, block_sector_t sector)
     {
       struct bcache_entry *bce = list_entry (e, struct bcache_entry, elem);
       if (device == bce -> device && sector == bce -> sector)
-        {
-          printf ("Cache hit! [%p,%u] --> %p\n", device, sector, bce);
-          return bce;
-        }
+        return bce;
 
       /* Advance the iterator by 1. */
       e = list_next_circular (&bcache_entry_list, e);
@@ -181,7 +176,6 @@ find_entry (struct block *device, block_sector_t sector)
   while (e != start);
 
 miss:
-  printf ("Cache miss! [%p,%u] --> NULL\n", device, sector);
   return NULL;
 }
 
