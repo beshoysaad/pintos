@@ -7,6 +7,7 @@
 
 /* Initialize buffer cache system */
 void bcache_init (void);
+void bcache_done (void);
 
 /* Read a block through the buffer cache system */
 bool bcache_read (struct block *, block_sector_t, void *, off_t, off_t);

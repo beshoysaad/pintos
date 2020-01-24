@@ -39,6 +39,9 @@ filesys_init (bool format)
 void
 filesys_done (void) 
 {
+  /* Uninitialize buffer cache system. */
+  bcache_done ();
+
   free_map_close ();
 }
 

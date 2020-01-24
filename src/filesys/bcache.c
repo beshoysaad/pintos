@@ -28,7 +28,7 @@ static struct list bcache_entry_list;
 /* Lock used for the buffer cache. */
 static struct lock bcache_lock;
 
-/* Initialize buffer cache system */
+/* Initializes buffer cache system */
 void
 bcache_init ()
 {
@@ -37,6 +37,22 @@ bcache_init ()
 
   /* Initialize the buffer cache lock */
   lock_init (&bcache_lock);
+}
+
+/* Uninitializes buffer cache system */
+void
+bcache_done ()
+{
+  /* Free all list bcache entries */
+  while (!list_empty (&bcache_entry_list))
+    {
+      struct list_elem *e = list_front (&bcache_entry_list);
+      struct bcache_entry *bce =  list_entry (e, struct bcache_entry, elem);
+
+      list_remove (e);
+      free (bce -> buffer);
+      free (bce);
+    }
 }
 
 /* Reads a block through the buffer cache system */
