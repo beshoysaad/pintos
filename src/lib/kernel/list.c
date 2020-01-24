@@ -522,3 +522,29 @@ list_min (struct list *list, list_less_func *less, void *aux)
     }
   return min;
 }
+
+/* Returns the element after ELEM in its list.  If ELEM is the
+   last element in its list, returns the first element in the
+   list. */
+struct list_elem *
+list_next_circular (struct list *list, struct list_elem *e)
+{
+  struct list_elem *next = list_next (e);
+  if (is_interior (next))
+    return next;
+  else
+    return list_begin (list);
+}
+
+/* Returns the element before ELEM in its list.  If ELEM is the
+   first element in its list, returns the last element in the
+   list. */
+struct list_elem *
+list_prev_circular (struct list *list, struct list_elem *e)
+{
+  struct list_elem *next = list_prev (e);
+  if (is_interior (next))
+    return next;
+  else
+    return list_end (list);
+}

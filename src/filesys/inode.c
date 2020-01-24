@@ -59,17 +59,11 @@ byte_to_sector (const struct inode *inode, off_t pos)
    returns the same `struct inode'. */
 static struct list open_inodes;
 
-/* Lock used for the buffer cache. */
-static struct lock bcache_lock;
-
 /* Initializes the inode module. */
 void
 inode_init (void) 
 {
   list_init (&open_inodes);
-
-  /* Initialize the buffer cache lock */
-  lock_init (&bcache_lock);
 }
 
 /* Initializes an inode with LENGTH bytes of data and
@@ -97,14 +91,16 @@ inode_create (block_sector_t sector, off_t length)
       disk_inode->magic = INODE_MAGIC;
       if (free_map_allocate (sectors, &disk_inode->start)) 
         {
-          block_write (fs_device, sector, disk_inode);
+          bcache_write (fs_device, sector, disk_inode,
+              BLOCK_SECTOR_SIZE, 0);
           if (sectors > 0) 
             {
               static char zeros[BLOCK_SECTOR_SIZE];
               size_t i;
               
               for (i = 0; i < sectors; i++) 
-                block_write (fs_device, disk_inode->start + i, zeros);
+                bcache_write (fs_device, disk_inode->start + i, zeros,
+                    BLOCK_SECTOR_SIZE, 0);
             }
           success = true; 
         } 
@@ -145,7 +141,8 @@ inode_open (block_sector_t sector)
   inode->open_cnt = 1;
   inode->deny_write_cnt = 0;
   inode->removed = false;
-  block_read (fs_device, inode->sector, &inode->data);
+  bcache_read (fs_device, inode->sector, &inode->data,
+      BLOCK_SECTOR_SIZE, 0);
   return inode;
 }
 
@@ -227,28 +224,10 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
       if (chunk_size <= 0)
         break;
 
-      /* Get the corresponding cache buffer for this block. */
-      lock_acquire (&bcache_lock);
-      struct bcache_entry *bce = bcache_get_entry (fs_device, sector_idx);
-      if (bce != NULL)
-        {
-          /* Partially copy into caller's buffer. */
-          memcpy (buffer + bytes_read, bce -> buffer + sector_ofs, chunk_size);
-        }
-      else
-        {
-          /* Get a new bcache entry */
-          bce = bcache_alloc_entry ();
-          bce -> device = fs_device;
-          bce -> sector = sector_idx;
+      /* Read the block from buffer cache. */
+      bcache_read (fs_device, sector_idx, buffer + bytes_read,
+          chunk_size, sector_ofs);
 
-          /* Read sector into bcache buffer, then partially copy
-             into caller's buffer. */
-          block_read (fs_device, sector_idx, bce -> buffer);
-          memcpy (buffer + bytes_read, bce -> buffer + sector_ofs, chunk_size);
-        }
-      lock_release (&bcache_lock);
-      
       /* Advance. */
       size -= chunk_size;
       offset += chunk_size;
@@ -269,7 +248,6 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
 {
   const uint8_t *buffer = buffer_;
   off_t bytes_written = 0;
-  uint8_t *bounce = NULL;
 
   if (inode->deny_write_cnt)
     {
@@ -292,38 +270,15 @@ inode_write_at (struct inode *inode, const void *buffer_, off_t size,
       if (chunk_size <= 0)
         break;
 
-      if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
-        {
-          /* Write full sector directly to disk. */
-          block_write (fs_device, sector_idx, buffer + bytes_written);
-        }
-      else 
-        {
-          /* We need a bounce buffer. */
-          if (bounce == NULL) 
-            {
-              bounce = malloc (BLOCK_SECTOR_SIZE);
-              if (bounce == NULL)
-                break;
-            }
-
-          /* If the sector contains data before or after the chunk
-             we're writing, then we need to read in the sector
-             first.  Otherwise we start with a sector of all zeros. */
-          if (sector_ofs > 0 || chunk_size < sector_left) 
-            block_read (fs_device, sector_idx, bounce);
-          else
-            memset (bounce, 0, BLOCK_SECTOR_SIZE);
-          memcpy (bounce + sector_ofs, buffer + bytes_written, chunk_size);
-          block_write (fs_device, sector_idx, bounce);
-        }
+      /* Read the block from buffer cache. */
+      bcache_write (fs_device, sector_idx, buffer + bytes_written,
+          chunk_size, sector_ofs);
 
       /* Advance. */
       size -= chunk_size;
       offset += chunk_size;
       bytes_written += chunk_size;
     }
-  free (bounce);
 
   return bytes_written;
 }

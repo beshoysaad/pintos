@@ -2,27 +2,14 @@
 #define FILESYS_BCACHE_H
 
 #include "devices/block.h"
-#include <list.h>
-
-/* Declare a buffer cache entry.
-   Holds all the metadata for a cache block */
-struct bcache_entry
-  {
-    struct list_elem  elem;
-    struct block      *device;
-    block_sector_t    sector;
-    void              *buffer;
-    long long         aux;
-  };
+#include "filesys/off_t.h"
+#include <stdbool.h>
 
 /* Initialize buffer cache system */
 void bcache_init (void);
 
-/* Returns the buffer address for the cached block */
-struct bcache_entry *bcache_get_entry (struct block *block, block_sector_t sector);
-
-/* Allocates a new buffer cache entry by evicting
-   a old entry if nessessary. */
-struct bcache_entry *bcache_alloc_entry (void);
+/* Read a block through the buffer cache system */
+bool bcache_read (struct block *, block_sector_t, void *, off_t, off_t);
+bool bcache_write (struct block *, block_sector_t, const void *, off_t, off_t);
 
 #endif /* filesys/bcache.h */
