@@ -35,6 +35,7 @@ union page_storage
 struct page
 {
   struct hash_elem h_elem;
+  struct process *proc;
   void *user_address;
   struct semaphore page_sema;
   uint32_t *pagedir;
@@ -48,25 +49,25 @@ bool
 page_table_init (struct hash **page_table);
 
 void
-page_table_destroy (void);
+page_table_destroy (struct process *proc);
 
 struct page*
-page_alloc_and_check_out (void *upage, uint32_t *pd, enum page_type type,
-bool writable);
+page_alloc_and_check_out (struct process *proc, void *upage, uint32_t *pd,
+			  enum page_type type, bool writable);
 
 void
-page_free (void *uaddr);
+page_free (struct process *proc, void *upage);
 
 struct page*
-page_check_out (void *upage);
+page_check_out (struct process *proc, void *upage, bool try);
 
 void
-page_check_in (void *upage);
+page_check_in (struct process *proc, void *upage);
 
 bool
-page_evict (void *uaddr);
+page_evict (struct process *proc, void *uaddr);
 
 bool
-page_is_writable (void *upage);
+page_is_writable (struct process *proc, void *upage);
 
 #endif /* SRC_VM_PAGE_H_ */

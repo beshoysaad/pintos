@@ -18,18 +18,19 @@ struct mapping
   mapid_t map_id;
   void *upage;
   int num_pages;
+  struct process *proc;
 };
 
 bool
 mapping_table_init (struct hash **mapping_table);
 
 void
-mapping_table_destroy (void);
+mapping_table_destroy (struct process *proc);
 
 struct mapping*
-mapping_alloc (void *upage, struct file *f);
+mapping_alloc (struct process *proc, void *upage, struct file *f);
 
 void
-mapping_free (mapid_t map_id);
+mapping_free (struct process *proc, mapid_t map_id);
 
 #endif /* SRC_VM_MAPPING_H_ */

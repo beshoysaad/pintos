@@ -172,8 +172,7 @@ page_fault (struct intr_frame *f)
 	}
       thread_exit (-1);
     }
-  else
-    {
-      thread_exit (-1);
-    }
+
+  thread_exit (-1);
+
 }

@@ -80,7 +80,7 @@ frame_alloc_and_check_out (bool zeroed)
 	    }
 	  else
 	    {
-	      if (page_evict (uaddr))
+	      if (page_evict (fr->user_page->proc, uaddr))
 		{
 		  sema_up (&frame_table_sema);
 		  fr->user_page = NULL;
@@ -158,7 +158,6 @@ frame_free (void *kaddr, bool free_page)
 	{
 	  palloc_free_page (fr->kernel_address);
 	}
-      sema_up (&fr->frame_sema);
       free (fr);
     }
   sema_up (&frame_table_sema);

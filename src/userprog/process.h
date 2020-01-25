@@ -11,14 +11,16 @@
 #define ARGC_MAX 128
 #define base_offset 4
 
-struct file_desc {
+struct file_desc
+{
   int fd;
   struct file *f;
   off_t pos;
   struct list_elem elem;
 };
 
-struct process {
+struct process
+{
   pid_t pid;
   pid_t parent_pid;
   struct list_elem elem;
@@ -30,7 +32,7 @@ struct process {
   bool load_successful;
   struct list *list_file_desc;
   int fd_counter;
-  struct file* executable;
+  struct file *executable;
   bool terminated;
   struct hash *page_table;
   struct semaphore page_table_sema;
@@ -39,14 +41,30 @@ struct process {
   struct lock mapping_table_lock;
 };
 
-tid_t process_execute (const char *file_name);
-int process_wait (tid_t);
-void process_exit (int status);
-void process_activate (void);
-void process_start(void);
-bool install_page (struct frame *f, struct page *p, bool writable);
-bool grow_stack (const void *fault_addr, void *esp, bool lock_in);
-bool retrieve_page (const void *fault_addr, bool lock_in);
+tid_t
+process_execute (const char *file_name);
+
+int
+process_wait (tid_t);
+
+void
+process_exit (int status);
+
+void
+process_activate (void);
+
+void
+process_start (void);
+
+bool
+install_page (struct frame *f, struct page *p, bool writable);
+
+bool
+grow_stack (const void *fault_addr, void *esp, bool lock_in);
+
+bool
+retrieve_page (const void *fault_addr, bool lock_in);
+
 bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
 	      uint32_t zero_bytes, bool writable, bool read_only);
