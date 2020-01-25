@@ -122,7 +122,7 @@ process_execute (const char *file_name)
   lock_init(&p->mapping_table_lock);
   if (!mapping_table_init (&p->mapping_table))
     {
-      page_table_destroy ();
+      page_table_destroy (p);
       free (p->list_file_desc);
       free (p);
       palloc_free_page (p_inf->fn);
@@ -161,7 +161,7 @@ start_process (void *p_inf_)
 {
   ASSERT(p_inf_ != NULL);
 
-  struct proc_inf *p_inf = (struct proc_inf *)p_inf_;
+  struct proc_inf *p_inf = (struct proc_inf *) p_inf_;
 
   char *file_name = p_inf->fn;
   ASSERT(file_name != NULL);
@@ -353,10 +353,10 @@ process_exit (int status)
     }
 
   // Free mapped files
-  mapping_table_destroy();
+  mapping_table_destroy(cur_process);
 
   // Free this process's page table
-  page_table_destroy();
+  page_table_destroy(cur_process);
 
   printf ("%s: exit(%d)\n", thread_current ()->name, status);
 
@@ -593,7 +593,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 /* load() helpers. */
 
-/* Checks whether PHDR describes a valid, loadable segment in
+/* Checks whether PHDR describes a valid, load-able segment in
    FILE and returns true if so, false otherwise. */
 static bool
 validate_segment (const struct Elf32_Phdr *phdr, struct file *file) 
@@ -664,6 +664,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
       return false;
     }
 
+  struct process *proc = thread_current()->p;
+
   while (read_bytes > 0 || zero_bytes > 0)
     {
       /* Calculate how to fill this page.
@@ -673,7 +675,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
       /* Get a page of memory. */
-      struct page *pg = page_alloc_and_check_out (upage,
+      struct page *pg = page_alloc_and_check_out (proc, upage,
 						  thread_current ()->pagedir,
 						  PAGE_TYPE_FILE, writable);
       if (pg == NULL)
@@ -691,7 +693,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes,
 	  pg->ps.fs.offset = ofs;
 	  pg->ps.fs.read_only = read_only;
 	}
-      page_check_in (upage);
+      page_check_in (proc, upage);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -715,7 +717,9 @@ setup_stack (void **esp)
 
   void *kaddr = f->kernel_address;
 
-  struct page *pg = page_alloc_and_check_out (upage, thread_current ()->pagedir,
+  struct process *proc = thread_current()->p;
+
+  struct page *pg = page_alloc_and_check_out (proc, upage, thread_current ()->pagedir,
 					      PAGE_TYPE_ZERO, true);
 
   if (pg == NULL)
@@ -727,16 +731,16 @@ setup_stack (void **esp)
 
   if (install_page (f, pg, true))
     {
-      page_check_in (upage);
+      page_check_in (proc, upage);
       frame_check_in (kaddr);
       *esp = PHYS_BASE;
       return true;
     }
   else
     {
-      page_check_in (upage);
+      page_check_in (proc, upage);
       frame_check_in (kaddr);
-      page_free (upage);
+      page_free (proc, upage);
       frame_free (kaddr, true);
       return false;
     }
@@ -783,7 +787,9 @@ grow_stack (const void *fault_addr, void *esp, bool lock_in)
       ASSERT(fr != NULL);
       void *kaddr = fr->kernel_address;
 
-      struct page *pg = page_alloc_and_check_out (uaddr,
+      struct process *proc = thread_current()->p;
+
+      struct page *pg = page_alloc_and_check_out (proc, uaddr,
 						  thread_current ()->pagedir,
 						  PAGE_TYPE_ZERO, true);
       if (pg == NULL)
@@ -797,16 +803,16 @@ grow_stack (const void *fault_addr, void *esp, bool lock_in)
 	{
 	  if (!lock_in)
 	    {
-	      page_check_in (uaddr);
+	      page_check_in (proc, uaddr);
 	    }
 	  frame_check_in (kaddr);
 	  return true;
 	}
       else
 	{
-	  page_check_in (uaddr);
+	  page_check_in (proc, uaddr);
 	  frame_check_in (kaddr);
-	  page_free (uaddr);
+	  page_free (proc, uaddr);
 	  frame_free (kaddr, true);
 	  return false;
 	}
@@ -822,7 +828,8 @@ retrieve_page (const void *fault_addr, bool lock_in)
   struct frame *fr = frame_alloc_and_check_out (false);
   ASSERT(fr != NULL);
   void *kaddr = fr->kernel_address;
-  struct page *p = page_check_out (uaddr);
+  struct process *proc = thread_current()->p;
+  struct page *p = page_check_out (proc, uaddr, false);
   if (p == NULL)
     {
       frame_check_in (kaddr);
@@ -833,7 +840,7 @@ retrieve_page (const void *fault_addr, bool lock_in)
     {
       if (!lock_in)
 	{
-	  page_check_in (uaddr);
+	  page_check_in (proc, uaddr);
 	}
       frame_check_in (kaddr);
       frame_free (kaddr, true);
@@ -876,14 +883,14 @@ retrieve_page (const void *fault_addr, bool lock_in)
     {
       if (!lock_in)
 	{
-	  page_check_in (uaddr);
+	  page_check_in (proc, uaddr);
 	}
       frame_check_in (kaddr);
       return true;
     }
   else
     {
-      page_check_in (uaddr);
+      page_check_in (proc, uaddr);
       frame_check_in (kaddr);
       frame_free (kaddr, true);
       return false;

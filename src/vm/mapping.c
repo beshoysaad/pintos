@@ -22,8 +22,8 @@ mapping_deallocate (struct hash_elem *e, void *aux UNUSED)
   ASSERT(m != NULL);
   for (int i = 0; i < m->num_pages; i++)
     {
-      page_evict (m->upage + (i * PGSIZE));
-      page_free (m->upage + (i * PGSIZE));
+      page_evict (m->proc, m->upage + (i * PGSIZE));
+      page_free (m->proc, m->upage + (i * PGSIZE));
     }
   free (m);
 }
@@ -58,24 +58,23 @@ mapping_table_init (struct hash **mapping_table)
 }
 
 void
-mapping_table_destroy (void)
+mapping_table_destroy (struct process *proc)
 {
-  struct process *proc = thread_current ()->p;
   lock_acquire (&proc->mapping_table_lock);
   hash_destroy (proc->mapping_table, mapping_deallocate);
-  lock_release (&proc->mapping_table_lock);
   free (proc->mapping_table);
 }
 
 struct mapping*
-mapping_alloc (void *upage, struct file *f)
+mapping_alloc (struct process *proc, void *upage, struct file *f)
 {
   if (f == NULL)
     {
       return NULL;
     }
+  ASSERT(upage != NULL);
+  ASSERT(proc != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
   struct mapping *mp = (struct mapping*) malloc (sizeof(struct mapping));
   ASSERT(mp != NULL);
   lock_acquire (&lock_file_sys);
@@ -87,8 +86,7 @@ mapping_alloc (void *upage, struct file *f)
       return NULL;
     }
   if (!load_segment (f, 0, upage, file_size, PGSIZE - (file_size % PGSIZE),
-  true,
-		     false))
+		     true, false))
     {
       free (mp);
       return NULL;
@@ -96,6 +94,7 @@ mapping_alloc (void *upage, struct file *f)
   mp->map_id = proc->mapping_counter++;
   mp->upage = upage;
   mp->num_pages = file_size / PGSIZE + ((file_size % PGSIZE == 0) ? 0 : 1);
+  mp->proc = proc;
   lock_acquire (&proc->mapping_table_lock);
   ASSERT(hash_insert(proc->mapping_table, &mp->h_elem) == NULL);
   lock_release (&proc->mapping_table_lock);
@@ -103,9 +102,8 @@ mapping_alloc (void *upage, struct file *f)
 }
 
 void
-mapping_free (mapid_t map_id)
+mapping_free (struct process *proc, mapid_t map_id)
 {
-  struct process *proc = thread_current ()->p;
   struct mapping m;
   struct hash_elem *e;
   m.map_id = map_id;
@@ -116,8 +114,8 @@ mapping_free (mapid_t map_id)
       struct mapping *mp = hash_entry(e, struct mapping, h_elem);
       for (int i = 0; i < mp->num_pages; i++)
 	{
-	  page_evict (mp->upage + (i * PGSIZE));
-	  page_free (mp->upage + (i * PGSIZE));
+	  page_evict (mp->proc, mp->upage + (i * PGSIZE));
+	  page_free (mp->proc, mp->upage + (i * PGSIZE));
 	}
       free (mp);
     }

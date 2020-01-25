@@ -17,6 +17,14 @@ struct block *swap_block = NULL;
 struct bitmap *swap_bm = NULL;
 struct lock swap_table_lock;
 
+static void
+swap_free_internal (block_sector_t sector)
+{
+  ASSERT(sector <= (block_size (swap_block) - 8));
+  ASSERT(bitmap_all (swap_bm, sector, 8));
+  bitmap_set_multiple (swap_bm, sector, 8, false);
+}
+
 void
 swap_table_init (void)
 {
@@ -39,7 +47,7 @@ swap_write (void *kaddr)
     {
       PANIC("Out of swap slots");
     }
-  ASSERT(s < (block_size (swap_block) - 7));
+  ASSERT(s <= (block_size (swap_block) - 8));
   ASSERT((s * BLOCK_SECTOR_SIZE) % PGSIZE == 0);
   for (int i = 0; i < 8; i++)
     {
@@ -51,22 +59,22 @@ swap_write (void *kaddr)
 void
 swap_read (block_sector_t sector, void *kaddr)
 {
-  ASSERT(sector < (block_size (swap_block) - 7));
+  ASSERT(sector <= (block_size (swap_block) - 8));
   ASSERT(is_kernel_vaddr (kaddr));
+  lock_acquire (&swap_table_lock);
   ASSERT(bitmap_all (swap_bm, sector, 8));
   for (int i = 0; i < 8; i++)
     {
       block_read (swap_block, sector + i, kaddr + (i * BLOCK_SECTOR_SIZE));
     }
-  swap_free (sector);
+  swap_free_internal (sector);
+  lock_release (&swap_table_lock);
 }
 
 void
 swap_free (block_sector_t sector)
 {
-  ASSERT(sector < (block_size (swap_block) - 7));
-  ASSERT(bitmap_all (swap_bm, sector, 8));
   lock_acquire (&swap_table_lock);
-  bitmap_set_multiple (swap_bm, sector, 8, false);
+  swap_free_internal (sector);
   lock_release (&swap_table_lock);
 }

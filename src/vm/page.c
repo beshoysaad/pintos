@@ -32,7 +32,6 @@ page_deallocate (struct hash_elem *e, void *aux UNUSED)
     {
       swap_free (p->ps.swap_sector);
     }
-  sema_up (&p->page_sema);
   free (p);
 }
 
@@ -66,32 +65,32 @@ page_table_init (struct hash **page_table)
 }
 
 void
-page_table_destroy (void)
+page_table_destroy (struct process *proc)
 {
-  struct process *proc = thread_current ()->p;
   sema_down (&proc->page_table_sema);
   hash_destroy (proc->page_table, page_deallocate);
-  sema_up (&proc->page_table_sema);
   free (proc->page_table);
 }
 
 struct page*
-page_alloc_and_check_out (void *upage, uint32_t *pagedir, enum page_type type,
-bool writable)
+page_alloc_and_check_out (struct process *proc, void *upage, uint32_t *pd,
+			  enum page_type type, bool writable)
 {
   if (upage == NULL)
     {
       return NULL;
     }
+  ASSERT(proc != NULL);
+  ASSERT(pd != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
   struct page *pg = (struct page*) malloc (sizeof(struct page));
   ASSERT(pg != NULL);
+  pg->proc = proc;
   pg->user_address = upage;
   pg->type = type;
   pg->writable = writable;
   pg->f = NULL;
-  pg->pagedir = pagedir;
+  pg->pagedir = pd;
   memset (&pg->ps, 0, sizeof(union page_storage));
   sema_init (&pg->page_sema, 1);
   sema_down (&proc->page_table_sema);
@@ -107,14 +106,14 @@ bool writable)
 }
 
 void
-page_free (void *upage)
+page_free (struct process *proc, void *upage)
 {
   if (upage == NULL)
     {
       return;
     }
+  ASSERT(proc != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
@@ -133,21 +132,20 @@ page_free (void *upage)
 	{
 	  swap_free (g->ps.swap_sector);
 	}
-      sema_up (&g->page_sema);
       free (g);
     }
   sema_up (&proc->page_table_sema);
 }
 
 struct page*
-page_check_out (void *upage)
+page_check_out (struct process *proc, void *upage, bool try)
 {
   if (upage == NULL)
     {
       return NULL;
     }
+  ASSERT(proc != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
@@ -156,9 +154,18 @@ page_check_out (void *upage)
   if (e != NULL)
     {
       struct page *pg = hash_entry(e, struct page, h_elem);
-      sema_down (&pg->page_sema);
+      bool got_page = false;
+      if (try)
+	{
+	  got_page = sema_try_down (&pg->page_sema);
+	}
+      else
+	{
+	  sema_down (&pg->page_sema);
+	  got_page = true;
+	}
       sema_up (&proc->page_table_sema);
-      return pg;
+      return got_page ? pg : NULL;
     }
   else
     {
@@ -168,14 +175,14 @@ page_check_out (void *upage)
 }
 
 void
-page_check_in (void *upage)
+page_check_in (struct process *proc, void *upage)
 {
   if (upage == NULL)
     {
       return;
     }
+  ASSERT(proc != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
@@ -190,21 +197,22 @@ page_check_in (void *upage)
 }
 
 bool
-page_evict (void *uaddr)
+page_evict (struct process *proc, void *uaddr)
 {
   if (uaddr == NULL)
     {
       return false;
     }
+  ASSERT(proc != NULL);
   ASSERT(is_user_vaddr (uaddr));
-  struct page *pg = page_check_out (uaddr);
+  struct page *pg = page_check_out (proc, uaddr, true);
   if (pg == NULL)
     {
       return false;
     }
   if (pg->f == NULL)
     {
-      page_check_in (uaddr);
+      page_check_in (proc, uaddr);
       return false;
     }
   uint32_t *user_pd = pg->pagedir;
@@ -250,16 +258,16 @@ page_evict (void *uaddr)
 	}
     }
   pg->f = NULL;
-  page_check_in (pg->user_address);
+  page_check_in (proc, uaddr);
   return true;
 }
 
 bool
-page_is_writable (void *upage)
+page_is_writable (struct process *proc, void *upage)
 {
   ASSERT(upage != NULL);
   ASSERT(is_user_vaddr (upage));
-  struct process *proc = thread_current ()->p;
+  ASSERT(proc != NULL);
   struct page p;
   struct hash_elem *e;
   p.user_address = upage;
@@ -267,6 +275,7 @@ page_is_writable (void *upage)
   e = hash_find (proc->page_table, &p.h_elem);
   ASSERT(e != NULL);
   struct page *pg = hash_entry(e, struct page, h_elem);
+  ASSERT(pg != NULL);
   bool result = pg->writable;
   sema_up (&proc->page_table_sema);
   return result;

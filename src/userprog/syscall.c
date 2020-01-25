@@ -42,14 +42,10 @@ terminate_process (struct intr_frame *f, int status)
 
 static void*
 get_kernel_address (struct intr_frame *f, uint32_t *pd, void *user_address,
-bool writable)
+		    bool writable)
 {
-  if (user_address == NULL)
-    {
-      goto error;
-    }
-
-  if (!is_user_vaddr (user_address))
+  if ((f == NULL) || (pd == NULL) || (user_address == NULL)
+      || !is_user_vaddr (user_address))
     {
       goto error;
     }
@@ -57,36 +53,32 @@ bool writable)
   void *upage = pg_round_down (user_address);
   void *ret_addr = NULL;
 
-  page_check_out (upage);
+  struct process *proc = thread_current ()->p;
+
+  page_check_out (proc, upage, false);
 
   ret_addr = pagedir_get_page (pd, user_address);
 
   if (ret_addr == NULL)
     {
-      page_check_in (upage);
-    }
-
-  if (ret_addr == NULL)
-    {
+      page_check_in (proc, upage);
       if (retrieve_page (user_address, true))
 	{
 	  ret_addr = pagedir_get_page (pd, user_address);
 	}
-    }
-  if (ret_addr == NULL)
-    {
-      if (grow_stack (user_address, f->esp, true))
+      else if (grow_stack (user_address, f->esp, true))
 	{
 	  ret_addr = pagedir_get_page (pd, user_address);
 	}
+      else
+	{
+	  goto error;
+	}
     }
-  if (ret_addr == NULL)
+
+  if (writable && !page_is_writable (proc, upage))
     {
-      goto error;
-    }
-  else if (writable && !page_is_writable (upage))
-    {
-      page_check_in (upage);
+      page_check_in (proc, upage);
       goto error;
     }
 
@@ -114,7 +106,7 @@ syscall_handler (struct intr_frame *f)
 
   uint32_t syscall_nr = *sp;
 
-  page_check_in (pg_round_down (user_sp));
+  page_check_in (cur_proc, pg_round_down (user_sp));
 
   switch (syscall_nr)
     {
@@ -128,7 +120,7 @@ syscall_handler (struct intr_frame *f)
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	int status = *(int*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	terminate_process (f, status);
 	break;
       }
@@ -136,12 +128,12 @@ syscall_handler (struct intr_frame *f)
       {
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	char *cmd_line = get_kernel_address (f, pd, *(char**) sp, false);
 	lock_acquire (&lock_file_sys);
 	f->eax = process_execute (cmd_line);
 	lock_release (&lock_file_sys);
-	page_check_in (pg_round_down (*(char**) sp));
+	page_check_in (cur_proc, pg_round_down (*(char**) sp));
 	break;
       }
     case SYS_WAIT:
@@ -150,23 +142,23 @@ syscall_handler (struct intr_frame *f)
 	sp = get_kernel_address (f, pd, user_sp, false);
 	pid_t pid = *(pid_t*) sp;
 	f->eax = process_wait (pid);
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	break;
       }
     case SYS_CREATE:
       {
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	char *file = get_kernel_address (f, pd, *(char**) sp, false);
 	user_sp++;
-	page_check_in (pg_round_down (*(char**) sp));
+	page_check_in (cur_proc, pg_round_down (*(char**) sp));
 	sp = get_kernel_address (f, pd, user_sp, false);
 	unsigned size = *(unsigned*) sp;
 	lock_acquire (&lock_file_sys);
 	f->eax = filesys_create (file, size);
 	lock_release (&lock_file_sys);
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	break;
       }
     case SYS_REMOVE:
@@ -177,17 +169,19 @@ syscall_handler (struct intr_frame *f)
 	lock_acquire (&lock_file_sys);
 	f->eax = filesys_remove (file);
 	lock_release (&lock_file_sys);
-	page_check_in (pg_round_down (user_sp));
-	page_check_in (pg_round_down (*(char**) sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (*(char**) sp));
 	break;
       }
     case SYS_OPEN:
       {
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	char *file = get_kernel_address (f, pd, *(char**) sp, false);
+	lock_acquire (&lock_file_sys);
 	struct file *fl = filesys_open (file);
+	lock_release (&lock_file_sys);
 	if (fl == NULL)
 	  {
 	    f->eax = -1;
@@ -199,7 +193,7 @@ syscall_handler (struct intr_frame *f)
 	    if (fd == NULL)
 	      {
 		f->eax = -1;
-		page_check_in (pg_round_down (*(char**) sp));
+		page_check_in (cur_proc, pg_round_down (*(char**) sp));
 		return;
 	      }
 	    fd->f = fl;
@@ -208,7 +202,7 @@ syscall_handler (struct intr_frame *f)
 	    list_push_front (cur_proc->list_file_desc, &fd->elem);
 	    f->eax = fd->fd;
 	  }
-	page_check_in (pg_round_down (*(char**) sp));
+	page_check_in (cur_proc, pg_round_down (*(char**) sp));
 	break;
       }
     case SYS_FILESIZE:
@@ -224,13 +218,15 @@ syscall_handler (struct intr_frame *f)
 	    struct file_desc *fl = list_entry(e, struct file_desc, elem);
 	    if (fl->fd == fd)
 	      {
+		lock_acquire (&lock_file_sys);
 		f->eax = file_length (fl->f);
-		page_check_in (pg_round_down (user_sp));
+		lock_release (&lock_file_sys);
+		page_check_in (cur_proc, pg_round_down (user_sp));
 		return;
 	      }
 	  }
 	f->eax = -1;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	break;
       }
     case SYS_READ:
@@ -238,21 +234,21 @@ syscall_handler (struct intr_frame *f)
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	int fd = *(int*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	uint8_t *user_buffer = *(uint8_t**) sp;
 	if (user_buffer == NULL)
 	  {
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	    return;
 	  }
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	unsigned size = *(unsigned*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	if (fd == 0)
 	  {
 	    int32_t rem_size = size;
@@ -270,7 +266,8 @@ syscall_handler (struct intr_frame *f)
 		  {
 		    kernel_buffer[i] = input_getc ();
 		  }
-		page_check_in (pg_round_down (user_buffer + chunk_idx));
+		page_check_in (cur_proc,
+			       pg_round_down (user_buffer + chunk_idx));
 		rem_size -= chunk_sz;
 		chunk_idx += chunk_sz;
 	      }
@@ -311,7 +308,8 @@ syscall_handler (struct intr_frame *f)
 						 fl->pos);
 			f->eax += sz;
 			fl->pos += sz;
-			page_check_in (pg_round_down (user_buffer + chunk_idx));
+			page_check_in (cur_proc,
+				       pg_round_down (user_buffer + chunk_idx));
 			rem_size -= chunk_sz;
 			chunk_idx += chunk_sz;
 		      }
@@ -333,21 +331,21 @@ syscall_handler (struct intr_frame *f)
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	int fd = *(int*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	void *user_buffer = *(void**) sp;
 	if (user_buffer == NULL)
 	  {
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	    return;
 	  }
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	unsigned size = *(unsigned*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	if (fd == 0)
 	  {
 	    f->eax = -1;
@@ -365,7 +363,8 @@ syscall_handler (struct intr_frame *f)
 		    rem_size,
 		    (char* )next_page (kernel_buffer) - kernel_buffer);
 		putbuf (kernel_buffer, chunk_sz);
-		page_check_in (pg_round_down (user_buffer + chunk_idx));
+		page_check_in (cur_proc,
+			       pg_round_down (user_buffer + chunk_idx));
 		rem_size -= chunk_sz;
 		chunk_idx += chunk_sz;
 	      }
@@ -401,7 +400,8 @@ syscall_handler (struct intr_frame *f)
 						  chunk_sz, fl->pos);
 			f->eax += sz;
 			fl->pos += sz;
-			page_check_in (pg_round_down (user_buffer + chunk_idx));
+			page_check_in (cur_proc,
+				       pg_round_down (user_buffer + chunk_idx));
 			rem_size -= chunk_sz;
 			chunk_idx += chunk_sz;
 		      }
@@ -422,13 +422,13 @@ syscall_handler (struct intr_frame *f)
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	int fd = *(int*) sp;
-	page_check_in (pg_round_down (user_sp));
+	page_check_in (cur_proc, pg_round_down (user_sp));
 	user_sp++;
 	sp = get_kernel_address (f, pd, user_sp, false);
 	unsigned position = *(unsigned*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    return;
 	  }
 	else
@@ -441,7 +441,7 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    fl->pos = position;
-		    page_check_in (pg_round_down (user_sp));
+		    page_check_in (cur_proc, pg_round_down (user_sp));
 		    return;
 		  }
 	      }
@@ -455,7 +455,7 @@ syscall_handler (struct intr_frame *f)
 	int fd = *(int*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	    return;
 	  }
@@ -469,11 +469,11 @@ syscall_handler (struct intr_frame *f)
 		if (fl->fd == fd)
 		  {
 		    f->eax = fl->pos;
-		    page_check_in (pg_round_down (user_sp));
+		    page_check_in (cur_proc, pg_round_down (user_sp));
 		    return;
 		  }
 	      }
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	    return;
 	  }
@@ -486,7 +486,7 @@ syscall_handler (struct intr_frame *f)
 	int fd = *(int*) sp;
 	if ((fd == 0) || (fd == 1))
 	  {
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	  }
 	else
@@ -500,61 +500,73 @@ syscall_handler (struct intr_frame *f)
 		  {
 		    list_remove (&fl->elem);
 		    free (fl);
-		    page_check_in (pg_round_down (user_sp));
+		    page_check_in (cur_proc, pg_round_down (user_sp));
 		    return;
 		  }
 	      }
-	    page_check_in (pg_round_down (user_sp));
+	    page_check_in (cur_proc, pg_round_down (user_sp));
 	    terminate_process (f, -1);
 	    return;
 	  }
 	break;
       }
     case SYS_MMAP:
-      user_sp++;
-      sp = get_kernel_address (f, pd, user_sp, false);
-      int fd = *(int*) sp;
-      if ((fd == 0) || (fd == 1))
-	{
-	  f->eax = -1;
-	  page_check_in (pg_round_down (user_sp));
-	  return;
-	}
-      page_check_in (pg_round_down (user_sp));
-      user_sp++;
-      sp = get_kernel_address (f, pd, user_sp, false);
-      void *addr = *(void**) sp;
-      struct list_elem *e;
-      for (e = list_begin (cur_proc->list_file_desc);
-	  e != list_end (cur_proc->list_file_desc); e = list_next (e))
-	{
-	  struct file_desc *fl = list_entry(e, struct file_desc, elem);
-	  if (fl->fd == fd)
-	    {
-	      struct file *new_f = file_reopen(fl->f);
-	      struct mapping *mp = mapping_alloc (addr, new_f);
-	      if (mp == NULL)
-		{
-		  f->eax = -1;
-		}
-	      else
-		{
-		  f->eax = mp->map_id;
-		}
-	      page_check_in (pg_round_down (user_sp));
-	      return;
-	    }
-	}
-      page_check_in (pg_round_down (user_sp));
-      terminate_process (f, -1);
-      break;
+      {
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp, false);
+	int fd = *(int*) sp;
+	if ((fd == 0) || (fd == 1))
+	  {
+	    f->eax = -1;
+	    page_check_in (cur_proc, pg_round_down (user_sp));
+	    return;
+	  }
+	page_check_in (cur_proc, pg_round_down (user_sp));
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp, false);
+	void *addr = *(void**) sp;
+	if (addr == NULL)
+	  {
+	    f->eax = -1;
+	    page_check_in (cur_proc, pg_round_down (user_sp));
+	    return;
+	  }
+	struct list_elem *e;
+	for (e = list_begin (cur_proc->list_file_desc);
+	    e != list_end (cur_proc->list_file_desc); e = list_next (e))
+	  {
+	    struct file_desc *fl = list_entry(e, struct file_desc, elem);
+	    if (fl->fd == fd)
+	      {
+		lock_acquire (&lock_file_sys);
+		struct file *new_f = file_reopen (fl->f);
+		lock_release (&lock_file_sys);
+		struct mapping *mp = mapping_alloc (cur_proc, addr, new_f);
+		if (mp == NULL)
+		  {
+		    f->eax = -1;
+		  }
+		else
+		  {
+		    f->eax = mp->map_id;
+		  }
+		page_check_in (cur_proc, pg_round_down (user_sp));
+		return;
+	      }
+	  }
+	page_check_in (cur_proc, pg_round_down (user_sp));
+	terminate_process (f, -1);
+	break;
+      }
     case SYS_MUNMAP:
-      user_sp++;
-      sp = get_kernel_address (f, pd, user_sp, false);
-      mapid_t mapping = *(mapid_t*) sp;
-      mapping_free (mapping);
-      page_check_in (pg_round_down (user_sp));
-      break;
+      {
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp, false);
+	mapid_t mapping = *(mapid_t*) sp;
+	mapping_free (cur_proc, mapping);
+	page_check_in (cur_proc, pg_round_down (user_sp));
+	break;
+      }
     default:
       break;
     }
