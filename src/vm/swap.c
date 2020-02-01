@@ -13,7 +13,7 @@
 #include "threads/vaddr.h"
 #include "swap.h"
 
-struct block *swap_block = NULL;
+struct block_device *swap_block = NULL;
 struct bitmap *swap_bm = NULL;
 struct lock swap_table_lock;
 

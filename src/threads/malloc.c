@@ -55,7 +55,7 @@ struct arena
   };
 
 /* Free block. */
-struct block 
+struct block
   {
     struct list_elem free_elem; /* Free list element. */
   };
@@ -262,7 +262,7 @@ free (void *p)
         }
     }
 }
-
+
 /* Returns the arena that block B is inside. */
 static struct arena *
 block_to_arena (struct block *b)

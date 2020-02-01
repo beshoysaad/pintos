@@ -9,23 +9,23 @@
 /* A partition of a block device. */
 struct partition
   {
-    struct block *block;                /* Underlying block device. */
+    struct block_device *block;                /* Underlying block device. */
     block_sector_t start;               /* First sector within device. */
   };
 
 static struct block_operations partition_operations;
 
-static void read_partition_table (struct block *, block_sector_t sector,
+static void read_partition_table (struct block_device *, block_sector_t sector,
                                   block_sector_t primary_extended_sector,
                                   int *part_nr);
-static void found_partition (struct block *, uint8_t type,
+static void found_partition (struct block_device *, uint8_t type,
                              block_sector_t start, block_sector_t size,
                              int part_nr);
 static const char *partition_type_name (uint8_t);
 
 /* Scans BLOCK for partitions of interest to Pintos. */
 void
-partition_scan (struct block *block)
+partition_scan (struct block_device *block)
 {
   int part_nr = 0;
   read_partition_table (block, 0, 0, &part_nr);
@@ -47,7 +47,7 @@ partition_scan (struct block *block)
    partitions already encountered on BLOCK.  It is incremented as
    partitions are found. */
 static void
-read_partition_table (struct block *block, block_sector_t sector,
+read_partition_table (struct block_device *block, block_sector_t sector,
                       block_sector_t primary_extended_sector,
                       int *part_nr)
 {
@@ -151,7 +151,7 @@ read_partition_table (struct block *block, block_sector_t sector,
    Check whether this is a partition of interest to Pintos, and
    if so then add it to the proper element of partitions[]. */
 static void
-found_partition (struct block *block, uint8_t part_type,
+found_partition (struct block_device *block, uint8_t part_type,
                  block_sector_t start, block_sector_t size,
                  int part_nr)
 {

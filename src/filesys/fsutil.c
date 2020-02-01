@@ -75,7 +75,7 @@ fsutil_extract (char **argv UNUSED)
 {
   static block_sector_t sector = 0;
 
-  struct block *src;
+  struct block_device *src;
   void *header, *data;
 
   /* Allocate buffers. */
@@ -172,7 +172,7 @@ fsutil_append (char **argv)
   const char *file_name = argv[1];
   void *buffer;
   struct file *src;
-  struct block *dst;
+  struct block_device *dst;
   off_t size;
 
   printf ("Appending '%s' to ustar archive on scratch device...\n", file_name);

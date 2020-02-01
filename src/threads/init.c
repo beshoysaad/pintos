@@ -413,7 +413,7 @@ locate_block_devices (void)
 static void
 locate_block_device (enum block_type role, const char *name)
 {
-  struct block *block = NULL;
+  struct block_device *block = NULL;
 
   if (name != NULL)
     {

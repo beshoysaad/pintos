@@ -9,7 +9,7 @@
 #include "filesys/bcache.h"
 
 /* Partition that contains the file system. */
-struct block *fs_device;
+struct block_device *fs_device;
 
 static void do_format (void);
 

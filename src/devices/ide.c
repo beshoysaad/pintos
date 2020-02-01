@@ -264,7 +264,7 @@ identify_ata_device (struct ata_disk *d)
   block_sector_t capacity;
   char *model, *serial;
   char extra_info[128];
-  struct block *block;
+  struct block_device *block;
 
   ASSERT (d->is_ata);
 
