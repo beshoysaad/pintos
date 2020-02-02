@@ -256,8 +256,9 @@ find_entry (struct block_device *device, block_sector_t sector)
           return bce;
         }
 
-      /* Advance the iterator by 1. */
-      e = list_next_circular (&bcache_entry_list, e);
+      /* Advance the iterator by 1. We search in reverse list
+         order to reward more recent cache entries. */
+      e = list_prev_circular (&bcache_entry_list, e);
     }
   while (e != start);
 
