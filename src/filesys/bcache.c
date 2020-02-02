@@ -21,6 +21,13 @@ struct bcache_entry
   bool used;
 };
 
+/* Data struct that holds the device and sector to read. */
+struct bcache_data
+{
+  struct block_device  *device;
+  block_sector_t       sector;
+};
+
 /* Declare buffer cache policy functions */
 static struct bcache_entry*
 find_entry (struct block_device*, block_sector_t);
@@ -28,6 +35,8 @@ static struct bcache_entry*
 alloc_entry (void);
 static void
 use_entry (struct bcache_entry*);
+static void
+thread_read_ahead (void*);
 static void
 thread_write_behind (void*);
 
@@ -72,9 +81,9 @@ bcache_done (void)
       /* Make sure the content is written to
        disk if it is dirty. */
       if (bce->dirty)
-	{
-	  block_write (bce->device, bce->sector, bce->buffer);
-	}
+        {
+          block_write (bce->device, bce->sector, bce->buffer);
+        }
 
       list_remove (e);
       free (bce->buffer);
@@ -116,7 +125,8 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
     }
 
   /* Partially copy into caller's buffer. */
-  memcpy (buffer, bce->buffer + offset, size);
+  if (buffer != NULL)
+    memcpy (buffer, bce->buffer + offset, size);
 
   lock_release (&bcache_lock);
   return cache_hit;
@@ -156,10 +166,39 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
     }
 
   /* Partially copy from caller's buffer. */
-  memcpy (bce->buffer + offset, buffer, size);
+  if (buffer != NULL)
+    memcpy (bce->buffer + offset, buffer, size);
 
   lock_release (&bcache_lock);
   return cache_hit;
+}
+
+/* Read-Ahead caller function to read a specfic block
+   into the block cache. */
+void
+bcache_read_ahead (struct block_device *device, block_sector_t sector)
+{
+  /* Allocate the AUX argument structure. */
+  struct bcache_data *data = malloc (sizeof *data);
+
+  /* Initialize the data packet. */
+  data -> device = device;
+  data -> sector = sector;
+
+  /* Start the read-ahead thread. */
+  thread_create ("bcache-read-ahead", PRI_DEFAULT, thread_read_ahead, data);
+}
+
+/* Thread function that read a single block into
+   the block cache. */
+static void
+thread_read_ahead (void *aux)
+{
+  struct bcache_data *data = aux;
+  
+  /* Read the block into the buffer cache. */
+  bcache_read (data -> device, data -> sector, NULL, 0, 0);
+  free (aux);
 }
 
 /* Thread function that periodically loops through
@@ -176,16 +215,16 @@ thread_write_behind (void *aux UNUSED)
 
       lock_acquire (&bcache_lock);
       for (e = list_begin (&bcache_entry_list);
-	  e != list_end (&bcache_entry_list); e = list_next (e))
-	{
-	  struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
+          e != list_end (&bcache_entry_list); e = list_next (e))
+        {
+          struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
 
-	  /* Write behind if dirty. */
-	  if (bce->dirty)
-	    {
-	      block_write (bce->device, bce->sector, bce->buffer);
-	    }
-	}
+          /* Write behind if dirty. */
+          if (bce->dirty)
+            {
+              block_write (bce->device, bce->sector, bce->buffer);
+            }
+        }
       lock_release (&bcache_lock);
     }
   while (!bcache_stop_write_behind);
@@ -213,16 +252,17 @@ find_entry (struct block_device *device, block_sector_t sector)
     {
       struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
       if (device == bce->device && sector == bce->sector)
-	{
-	  return bce;
-	}
+        {
+          return bce;
+        }
 
       /* Advance the iterator by 1. */
       e = list_next_circular (&bcache_entry_list, e);
     }
   while (e != start);
 
-miss: return NULL;
+miss:
+  return NULL;
 }
 
 /* Allocates a new buffer cache entry by evicting
@@ -235,29 +275,29 @@ alloc_entry (void)
       /* Iterate through the entry list and search for the first
        element with used bit == false */
       do
-	{
-	  struct bcache_entry *bce = list_entry(bcache_policy_ptr,
-						struct bcache_entry, elem);
+        {
+          struct bcache_entry *bce = list_entry(bcache_policy_ptr,
+                  struct bcache_entry, elem);
 
-	  /* Advance the list pointer by 1 */
-	  bcache_policy_ptr = list_next_circular (&bcache_entry_list,
-						  bcache_policy_ptr);
+          /* Advance the list pointer by 1 */
+          bcache_policy_ptr = list_next_circular (&bcache_entry_list,
+                    bcache_policy_ptr);
 
-	  if (bce->used == false)
-	    {
-	      /* Write behind if dirty. */
-	      if (bce->dirty)
-		{
-		  block_write (bce->device, bce->sector, bce->buffer);
-		}
+          if (bce->used == false)
+            {
+              /* Write behind if dirty. */
+              if (bce->dirty)
+                {
+                  block_write (bce->device, bce->sector, bce->buffer);
+                }
 
-	      return bce;
-	    }
-	  else
-	    {
-	      bce->used = false;
-	    }
-	}
+              return bce;
+            }
+          else
+            {
+              bce->used = false;
+            }
+        }
       while (true);
     }
   else
@@ -269,16 +309,16 @@ alloc_entry (void)
 
       /* Insert the entry into the global list of entries */
       if (!list_empty (&bcache_entry_list))
-	{
-	  list_insert (bcache_policy_ptr, &bce->elem);
-	}
+        {
+          list_insert (bcache_policy_ptr, &bce->elem);
+        }
       else
-	{
-	  /* Handle the case where the list is empty
-	   and `bcache_policy_ptr' is uninitialized. */
-	  list_push_back (&bcache_entry_list, &bce->elem);
-	  bcache_policy_ptr = &bce->elem;
-	}
+        {
+          /* Handle the case where the list is empty
+          and `bcache_policy_ptr' is uninitialized. */
+          list_push_back (&bcache_entry_list, &bce->elem);
+          bcache_policy_ptr = &bce->elem;
+        }
 
       return bce;
     }

@@ -21,4 +21,8 @@ bcache_read (struct block_device*, block_sector_t, void*, off_t, off_t);
 bool
 bcache_write (struct block_device*, block_sector_t, const void*, off_t, off_t);
 
+/* Read-Ahead caller function to read a specfic block into the cache */
+void
+bcache_read_ahead (struct block_device*, block_sector_t);
+
 #endif /* filesys/bcache.h */
