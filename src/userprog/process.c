@@ -307,6 +307,9 @@ process_exit (int status)
   struct process *cur_process = cur_thread->p;
   uint32_t *pd;
 
+  if (cur_process == NULL)
+    goto pd_destroy;
+
   ASSERT(cur_process != NULL);
   ASSERT(cur_process->list_file_desc != NULL);
 
@@ -368,6 +371,7 @@ process_exit (int status)
       free (cur_process);
     }
 
+pd_destroy:
   /* Destroy the current process's page directory and switch back
    to the kernel-only page directory. */
   pd = cur_thread->pagedir;
