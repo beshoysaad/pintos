@@ -2,6 +2,7 @@
 #include "devices/timer.h"
 #include "filesys/bcache.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,8 @@ struct bcache_entry
   uint8_t *buffer;
   bool dirty;
   bool used;
+  struct lock lock;
+  struct lock cntlock;
 };
 
 /* Data struct that holds the device and sector to read. */
@@ -34,17 +37,26 @@ find_entry (struct block_device*, block_sector_t);
 static struct bcache_entry*
 alloc_entry (void);
 static void
-use_entry (struct bcache_entry*);
-static void
 thread_read_ahead (void*);
 static void
 thread_write_behind (void*);
 
+/* Declare common synchronization parts */
+static void enter_usage_flow (void);
+static void exit_usage_flow (void);
+static void enter_modification_flow (void);
+static void exit_modification_flow (void);
+
 /* List holding all Buffer Cache Entries */
 static struct list bcache_entry_list;
 
-/* Lock used for the buffer cache. */
-static struct lock bcache_lock;
+/* Synchronization constructs for the buffer cache. */
+static struct lock usage_flow_lock;
+static struct condition usage_flow_condition;
+static unsigned usage_flow_count;
+static struct lock modification_flow_lock;
+static struct condition modification_flow_condition;
+static unsigned modification_flow_count;
 
 /* Indicator if the Write-Behind thread should stop. */
 static bool bcache_stop_write_behind;
@@ -56,8 +68,13 @@ bcache_init (void)
   /* Initialize the Buffer Cache Entry list */
   list_init (&bcache_entry_list);
 
-  /* Initialize the buffer cache lock */
-  lock_init (&bcache_lock);
+  /* Initialize the buffer cache synchonization. */
+  lock_init(&modification_flow_lock);
+  cond_init(&modification_flow_condition);
+  modification_flow_count = 0;
+  lock_init(&usage_flow_lock);
+  cond_init(&usage_flow_condition);
+  usage_flow_count = 0;
 
   /* Start the Write-Behind thread. */
   bcache_stop_write_behind = false;
@@ -71,12 +88,16 @@ bcache_done (void)
   /* Stop the Write-Behind thread */
   bcache_stop_write_behind = true;
 
+  /* Enter modification flow. */
+  enter_modification_flow ();
+
   /* Free all list bcache entries */
-  lock_acquire (&bcache_lock);
   while (!list_empty (&bcache_entry_list))
     {
       struct list_elem *e = list_front (&bcache_entry_list);
       struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
+      lock_acquire (&bce->lock);
+      lock_acquire (&bce->cntlock);
 
       /* Make sure the content is written to
        disk if it is dirty. */
@@ -89,7 +110,9 @@ bcache_done (void)
       free (bce->buffer);
       free (bce);
     }
-  lock_release (&bcache_lock);
+
+  /* Exit modification flow. */
+  exit_modification_flow ();
 }
 
 /* Reads a block through the buffer cache system */
@@ -98,7 +121,6 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
 	     off_t size, off_t offset)
 {
   bool cache_hit;
-  lock_acquire (&bcache_lock);
 
   /* Find the corresponding buffer cache entry, if
    it exists. */
@@ -114,6 +136,8 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
       bce->dirty = false;
 
       /* Read sector into bcache buffer. */
+      lock_acquire (&bce->cntlock);
+      lock_release (&bce->lock);
       block_read (device, sector, bce->buffer);
     }
   else
@@ -121,14 +145,17 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
       cache_hit = true;
 
       /* Mark the entry as recently used. */
-      use_entry (bce);
+      bce->used = true;
+
+      lock_acquire (&bce->cntlock);
+      lock_release (&bce->lock);
     }
 
   /* Partially copy into caller's buffer. */
   if (buffer != NULL)
     memcpy (buffer, bce->buffer + offset, size);
 
-  lock_release (&bcache_lock);
+  lock_release (&bce->cntlock);
   return cache_hit;
 }
 
@@ -138,7 +165,6 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
 	      off_t size, off_t offset)
 {
   bool cache_hit;
-  lock_acquire (&bcache_lock);
 
   /* Find the corresponding buffer cache entry, if
    it exists. */
@@ -154,6 +180,8 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
       bce->dirty = true;
 
       /* Read sector into bcache buffer. */
+      lock_acquire (&bce->cntlock);
+      lock_release (&bce->lock);
       block_read (device, sector, bce->buffer);
     }
   else
@@ -162,14 +190,17 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
 
       /* Mark the entry as dirty and recently used. */
       bce->dirty = true;
-      use_entry (bce);
+      bce->used = true;
+
+      lock_acquire (&bce->cntlock);
+      lock_release (&bce->lock);
     }
 
   /* Partially copy from caller's buffer. */
   if (buffer != NULL)
     memcpy (bce->buffer + offset, buffer, size);
 
-  lock_release (&bcache_lock);
+  lock_release (&bce->cntlock);
   return cache_hit;
 }
 
@@ -186,7 +217,7 @@ bcache_read_ahead (struct block_device *device, block_sector_t sector)
   data -> sector = sector;
 
   /* Start the read-ahead thread. */
-  thread_create ("bcache-read-ahead", PRI_DEFAULT, thread_read_ahead, data);
+  thread_create ("bcache-read-ahead", PRI_MIN, thread_read_ahead, data);
 }
 
 /* Thread function that read a single block into
@@ -213,19 +244,31 @@ thread_write_behind (void *aux UNUSED)
     {
       timer_sleep (1000); /* 1000 ticks. */
 
-      lock_acquire (&bcache_lock);
+      /* Enter the usage flow. */
+      enter_usage_flow ();
+
       for (e = list_begin (&bcache_entry_list);
           e != list_end (&bcache_entry_list); e = list_next (e))
         {
           struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
+          lock_acquire (&bce->lock);
 
           /* Write behind if dirty. */
           if (bce->dirty)
             {
+              lock_acquire (&bce->cntlock);
+              lock_release (&bce->lock);
               block_write (bce->device, bce->sector, bce->buffer);
+              lock_release (&bce->cntlock);
+            }
+          else
+            {
+              lock_release (&bce->lock);
             }
         }
-      lock_release (&bcache_lock);
+
+      /* Exit the usage flow. */
+      exit_usage_flow ();
     }
   while (!bcache_stop_write_behind);
 }
@@ -236,25 +279,31 @@ thread_write_behind (void *aux UNUSED)
 static struct list_elem *bcache_policy_ptr;
 
 /* Iterates through the buffer cache entries and
- searches for a matching item. */
+ searches for a matching item. If a matching item
+ is found, its lock is automatically aquired. */
 static struct bcache_entry*
 find_entry (struct block_device *device, block_sector_t sector)
 {
   struct list_elem *e, *start;
+  struct bcache_entry *bce = NULL;
+
+  /* Enter the usage flow. */
+  enter_usage_flow ();
 
   /* Shortcut if the list is empty. */
   if (list_empty (&bcache_entry_list))
-    goto miss;
+    goto exit;
 
   /* Iterate through the entry list and search for a matching entry */
   start = e = bcache_policy_ptr;
   do
     {
-      struct bcache_entry *bce = list_entry(e, struct bcache_entry, elem);
+      bce = list_entry(e, struct bcache_entry, elem);
+      lock_acquire (&bce->lock);
       if (device == bce->device && sector == bce->sector)
-        {
-          return bce;
-        }
+        goto exit;
+
+      lock_release (&bce->lock);
 
       /* Advance the iterator by 1. We search in reverse list
          order to reward more recent cache entries. */
@@ -262,17 +311,27 @@ find_entry (struct block_device *device, block_sector_t sector)
     }
   while (e != start);
 
-miss:
-  return NULL;
+  /* Reset the return value. */
+  bce = NULL;
+
+exit:
+  /* Exit the usage flow. */
+  exit_usage_flow ();
+
+  return bce;
 }
 
 /* Allocates a new buffer cache entry by evicting
- a old entry if necessary. */
+ a old entry if necessary. The lock of the entry
+ is automatically aquired. */
 static struct bcache_entry*
 alloc_entry (void)
 {
   if (list_size (&bcache_entry_list) >= ENTRY_LIMIT)
     {
+      /* Enter the usage flow. */
+      enter_usage_flow ();
+
       /* Iterate through the entry list and search for the first
        element with used bit == false */
       do
@@ -284,20 +343,25 @@ alloc_entry (void)
           bcache_policy_ptr = list_next_circular (&bcache_entry_list,
                     bcache_policy_ptr);
 
-          if (bce->used == false)
+          lock_acquire (&bce->lock);
+          if (bce->used == true)
+            bce->used = false;
+          else
             {
               /* Write behind if dirty. */
               if (bce->dirty)
                 {
+                  lock_acquire (&bce->cntlock);
                   block_write (bce->device, bce->sector, bce->buffer);
+                  lock_release (&bce->cntlock);
                 }
+
+              /* Exit the usage flow. */
+              exit_usage_flow ();
 
               return bce;
             }
-          else
-            {
-              bce->used = false;
-            }
+          lock_release (&bce->lock);
         }
       while (true);
     }
@@ -307,6 +371,12 @@ alloc_entry (void)
       struct bcache_entry *bce = malloc (sizeof *bce);
       bce->buffer = malloc (BLOCK_SECTOR_SIZE);
       bce->used = false;
+      lock_init (&bce->lock);
+      lock_init (&bce->cntlock);
+      lock_acquire (&bce->lock);
+
+      /* Enter modification flow. */
+      enter_modification_flow ();
 
       /* Insert the entry into the global list of entries */
       if (!list_empty (&bcache_entry_list))
@@ -321,14 +391,61 @@ alloc_entry (void)
           bcache_policy_ptr = &bce->elem;
         }
 
+      /* Exit modification flow. */
+      exit_modification_flow ();
+
       return bce;
     }
 }
 
-/* Define USE for the CLOCK cache replacement policy */
+/* BUFFER CACHE SYNCHRONISATION */
+
+/* Enters a usage flow. This should be called before
+   iterating over the bcache entry list. */
 static void
-use_entry (struct bcache_entry *bce)
+enter_usage_flow (void)
 {
-  /* Set the used bit of that entry. */
-  bce->used = true;
+  lock_acquire(&modification_flow_lock);
+  while (modification_flow_count > 0)
+    cond_wait(&modification_flow_condition, &modification_flow_lock);
+  lock_release(&modification_flow_lock);
+  lock_acquire(&usage_flow_lock);
+  ++usage_flow_count;
+  lock_release(&usage_flow_lock);
+}
+
+/* Exits a usage flow. This should be called after
+   iterating over the bcache entry list. */
+static void
+exit_usage_flow (void)
+{
+  lock_acquire(&usage_flow_lock);
+  --usage_flow_count;
+  cond_broadcast(&usage_flow_condition, &usage_flow_lock);
+  lock_release(&usage_flow_lock);
+}
+
+/* Enters a modification flow. This should be called
+   before modifying the bcache entry list (i.e. adding
+   or removing a item). */
+static void
+enter_modification_flow (void)
+{
+  lock_acquire(&modification_flow_lock);
+  ++modification_flow_count;
+  lock_acquire(&usage_flow_lock);
+  while (usage_flow_count > 0)
+    cond_wait(&usage_flow_condition, &usage_flow_lock);
+  lock_release(&usage_flow_lock);
+}
+
+/* Exits a modification flow. This should be called
+   after modifying the bcache entry list (i.e. adding
+   or removing a item). */
+static void
+exit_modification_flow (void)
+{
+  --modification_flow_count;
+  cond_broadcast(&modification_flow_condition, &modification_flow_lock);
+  lock_release(&modification_flow_lock);
 }
