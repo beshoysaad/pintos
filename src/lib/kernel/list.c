@@ -532,8 +532,9 @@ list_next_circular (struct list *list, struct list_elem *e)
   struct list_elem *next = list_next (e);
   if (is_interior (next))
     return next;
-  else
+  else if (is_tail (next))
     return list_begin (list);
+  return NULL;
 }
 
 /* Returns the element before ELEM in its list.  If ELEM is the
@@ -542,9 +543,10 @@ list_next_circular (struct list *list, struct list_elem *e)
 struct list_elem *
 list_prev_circular (struct list *list, struct list_elem *e)
 {
-  struct list_elem *next = list_prev (e);
-  if (is_interior (next))
-    return next;
-  else
-    return list_end (list);
+  struct list_elem *prev = list_prev (e);
+  if (is_interior (prev))
+    return prev;
+  else if (is_head (prev))
+    return list_rbegin (list);
+  return NULL;
 }
