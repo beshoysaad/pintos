@@ -12,6 +12,7 @@
 #include "threads/malloc.h"
 #include "devices/input.h"
 #include "vm/mapping.h"
+#include "filesys/directory.h"
 
 #define MIN(A, B)	(((A) < (B)) ? (A) : (B))
 
@@ -42,7 +43,7 @@ terminate_process (struct intr_frame *f, int status)
 
 static void*
 get_kernel_address (struct intr_frame *f, uint32_t *pd, void *user_address,
-		    bool writable)
+bool writable)
 {
   if ((f == NULL) || (pd == NULL) || (user_address == NULL)
       || !is_user_vaddr (user_address))
@@ -151,6 +152,16 @@ syscall_handler (struct intr_frame *f)
 	sp = get_kernel_address (f, pd, user_sp, false);
 	page_check_in (cur_proc, pg_round_down (user_sp));
 	char *file = get_kernel_address (f, pd, *(char**) sp, false);
+	if (file == NULL)
+	  {
+	    f->eax = false;
+	    return;
+	  }
+	if (strcmp (file, "") == 0)
+	  {
+	    f->eax = false;
+	    return;
+	  }
 	user_sp++;
 	page_check_in (cur_proc, pg_round_down (*(char**) sp));
 	sp = get_kernel_address (f, pd, user_sp, false);
@@ -565,6 +576,59 @@ syscall_handler (struct intr_frame *f)
 	mapid_t mapping = *(mapid_t*) sp;
 	mapping_free (cur_proc, mapping);
 	page_check_in (cur_proc, pg_round_down (user_sp));
+	break;
+      }
+    case SYS_CHDIR:
+      {
+	user_sp++;
+	sp = get_kernel_address (f, pd, user_sp, false);
+	page_check_in (cur_proc, pg_round_down (user_sp));
+	char *dir_name = get_kernel_address (f, pd, *(char**) sp, false);
+	page_check_in(cur_proc, pg_round_down(*(char**) sp));
+	if (dir_name == NULL)
+	  {
+	    f->eax = false;
+	    return;
+	  }
+	else if (strcmp (dir_name, ""))
+	  {
+	    f->eax = false;
+	    return;
+	  }
+	else
+	  {
+	    struct inode *inode;
+	    if (dir_name[0] == '/') // absolute
+	      {
+		f->eax = dir_lookup (dir_open_root (), dir_name, &inode,
+				     ENTRY_TYPE_DIR);
+	      }
+	    else // relative
+	      {
+		f->eax = dir_lookup (cur_proc->cur_dir, dir_name, &inode,
+				     ENTRY_TYPE_DIR);
+	      }
+	    if (f->eax == true)
+	      {
+		cur_proc->cur_dir = dir_open (inode);
+	      }
+	  }
+	break;
+      }
+    case SYS_MKDIR:
+      {
+	break;
+      }
+    case SYS_READDIR:
+      {
+	break;
+      }
+    case SYS_ISDIR:
+      {
+	break;
+      }
+    case SYS_INUMBER:
+      {
 	break;
       }
     default:

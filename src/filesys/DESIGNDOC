@@ -20,8 +20,6 @@ Sandro Montemezzani <s8samont@stud.uni-saarland.de> 2563261
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
 
-Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
-
 		     INDEXED AND EXTENSIBLE FILES
 		     ============================
 
@@ -31,13 +29,38 @@ Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct inode_disk_indirect
+{
+  block_sector_t sector_nums[NUM_INDIRECT_SECTORS];
+};
+This is a block sector containing 128 addresses of indirect block sectors.
+This is used when allocating indirect and doubly-indirect nodes.
+
+struct inode_disk
+{
+  off_t length; /* File size in bytes. */
+  block_sector_t sector_nums[NUM_DIRECT_SECTORS]; /* Direct pointers. */
+  block_sector_t indirect; /* Singly-indirect pointer. */
+  block_sector_t doubly_indirect; /* Doubly-indirect pointer. */
+  unsigned magic; /* Magic number. */
+};
+The on-disk inode now contains 124 direct sector numbers, in addition to one
+singly-indirect block that points to 128 data blocks, and one doubly-indirect 
+block that points to 128 singly-indirect blocks.
+
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
+
+maximum file size = 124 direct nodes * 512 + 128 singly-indirect nodes * 512
++ 128 * 128 doubly-indirect nodes * 512 = 8517632 bytes ~ 8.123 MB
 
 ---- SYNCHRONIZATION ----
 
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
+
+We have kept the global file system lock from previous projects, thus no two
+processes can access the file system at once.
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
@@ -46,12 +69,17 @@ Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
 >> nonzero data, A is not allowed to see all zeros.  Explain how your
 >> code avoids this race.
 
+Again, the global lock prevents this scenario. A will either read before B 
+writes (thus it reads no new data) or after (so it reads all new data).
+
 >> A5: Explain how your synchronization design provides "fairness".
 >> File access is "fair" if readers cannot indefinitely block writers
 >> or vice versa.  That is, many processes reading from a file cannot
 >> prevent forever another process from writing the file, and many
 >> processes writing to a file cannot prevent another process forever
 >> from reading the file.
+
+Our current design does not provide fairness.
 
 ---- RATIONALE ----
 
@@ -60,6 +88,10 @@ Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
 >> indirect blocks?  If not, why did you choose an alternative inode
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
+
+Our inode structure is multi-level indexed (with max depth of 2). We have 
+chosen to implement only 1 indirect and 1 doubly-indirect block since this 
+covers the target maximum size of 8 MB.
 
 			    SUBDIRECTORIES
 			    ==============
@@ -70,10 +102,34 @@ Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+/* A single directory entry. */
+struct dir_entry
+{
+  block_sector_t inode_sector; /* Sector number of header. */
+  char name[NAME_MAX + 1]; /* Null terminated file name. */
+  bool in_use; /* In use or free? */
+  enum entry_type type; /* Is this a file or a directory */
+};
+directory entry now has a new member to indicate whether the entry is a file 
+or a subdirectory.
+
+struct process
+{
+  ...
+  struct dir *cur_dir;
+};
+process struct now has a directory pointer to indicate current directory
+
 ---- ALGORITHMS ----
 
 >> B2: Describe your code for traversing a user-specified path.  How
 >> do traversals of absolute and relative paths differ?
+
+We traverse absolute paths starting from root, while we traverse relative paths 
+starting from the current directory of the process.
+We use strtok_r to tokenize the given string and lookup the returned token each
+time. If the token doesn't exist in the current directory we return false. 
+Otherwise if we finish the traversal we do the required operation (add, remove, etc)
 
 ---- SYNCHRONIZATION ----
 
@@ -82,15 +138,21 @@ Inode pointer structure: https://en.wikipedia.org/wiki/Inode_pointer_structure
 >> should succeed, as should only one of two simultaneous attempts to
 >> create a file with the same name, and so on.
 
+The global filesystem lock prevents races.
+
 >> B5: Does your implementation allow a directory to be removed if it
 >> is open by a process or if it is in use as a process's current
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
+We allow the removal of an open directory as well as a working directory.
+It is marked as removed and all further operations on that directory fail.
+
 ---- RATIONALE ----
 
 >> B6: Explain why you chose to represent the current directory of a
 >> process the way you did.
+
 
 			     BUFFER CACHE
 			     ============

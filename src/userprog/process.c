@@ -92,6 +92,7 @@ process_execute (const char *file_name)
   p->parent_pid = thread_current ()->tid;
   p->fd_counter = 2;
   p->executable = NULL;
+  p->cur_dir = dir_open_root();
   sema_init (&p->sema_start, 0);
   sema_init (&p->sema_terminate, 0);
   lock_init (&p->lock_modify);

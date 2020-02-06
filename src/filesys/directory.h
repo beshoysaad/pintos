@@ -13,6 +13,11 @@
 
 struct inode;
 
+enum entry_type {
+  ENTRY_TYPE_DIR,
+  ENTRY_TYPE_FILE
+};
+
 /* Opening and closing directories. */
 bool dir_create (block_sector_t sector, size_t entry_cnt);
 struct dir *dir_open (struct inode *);
@@ -22,8 +27,8 @@ void dir_close (struct dir *);
 struct inode *dir_get_inode (struct dir *);
 
 /* Reading and writing. */
-bool dir_lookup (const struct dir *, const char *name, struct inode **);
-bool dir_add (struct dir *, const char *name, block_sector_t);
+bool dir_lookup (const struct dir *, const char *name, struct inode **, enum entry_type type);
+bool dir_add (struct dir *, const char *name, block_sector_t, enum entry_type type);
 bool dir_remove (struct dir *, const char *name);
 bool dir_readdir (struct dir *, char name[NAME_MAX + 1]);
 

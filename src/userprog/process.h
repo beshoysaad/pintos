@@ -39,6 +39,7 @@ struct process
   mapid_t mapping_counter;
   struct hash *mapping_table;
   struct lock mapping_table_lock;
+  struct dir *cur_dir;
 };
 
 tid_t
