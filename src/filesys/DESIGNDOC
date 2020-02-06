@@ -171,8 +171,6 @@ struct bcache_entry
   uint8_t *buffer;              // pointer to the buffer where the contents are stored
   bool dirty;                   // wether the contents differ from what is currently on the disk
   bool used;                    // the used bit for the CLOCK eviction algorithm
-  struct lock lock;             // general lock for accessing/modifying the metadata of this entry
-  struct lock cntlock;          // lock for accessing/modifying the data contents of this entry
 };
 This struct holds all metadata needed for a single
 entry in the buffer cache.
@@ -188,21 +186,8 @@ read-ahead thread.
 `static struct list bcache_entry_list;'
 List holding all Buffer Cache Entries
 
-`static struct lock usage_flow_lock;
- static struct condition usage_flow_condition;
- static unsigned usage_flow_count;'
-When a thread starts iterating over the entries, `usage_flow_count' is increased.
-When it leaves the loop, `usage_flow_count' is decreased again. Other threads can
-wait for a usage flow to exit using `sage_flow_condition'.
-
-`static struct lock modification_flow_lock;
- static struct condition modification_flow_condition;
- static unsigned modification_flow_count;'
-When a thread wants to modify the entries list (i.e add or remove entries), it
-will increase `modification_flow_count'. When a thread is waiting to enter a
-modification flow, other threads will no longer enter usage flows. Once all
-usage flows have exited, the list can be modified and waiting threads can be
-notified using `modification_flow_condition'.
+`static struct lock bcache_lock;'
+Global lock for interactions with buffer cache
 
 `static bool bcache_stop_write_behind;'
 Boolean flag to indicate the periodical write-behind thread that it
@@ -241,16 +226,14 @@ the call for the N blocks returns.
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
-Each cache entry has two locks for the metadata and for the data content.
-To evict a entry, both locks need to be aquired.
+Since every interaction on the entry list is locked by the gobal lock,
+there will be no 2 processes accessing there data at the same time,
+be it to check its metadata, read the buffer contents or evict the entry.
 
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
 
-Similarly, to access a cache entry, the metadata lock needs to be acquired
-first, potentially followed by the data lock. Since the evicting process will
-hold these locks during eviction, no other processes are accessing the data at
-the same time.
+(same reason as for previous question)
 
 ---- RATIONALE ----
 
