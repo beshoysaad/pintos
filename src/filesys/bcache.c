@@ -35,7 +35,7 @@ thread_write_behind (void*);
 static struct list bcache_entry_list;
 
 /* Lock used for the buffer cache. */
-static struct lock bcache_lock;
+//static struct lock bcache_lock;
 
 /* Indicator if the Write-Behind thread should stop. */
 static bool bcache_stop_write_behind;
@@ -48,7 +48,7 @@ bcache_init (void)
   list_init (&bcache_entry_list);
 
   /* Initialize the buffer cache lock */
-  lock_init (&bcache_lock);
+//  lock_init (&bcache_lock);
 
   /* Start the Write-Behind thread. */
   bcache_stop_write_behind = false;
@@ -63,7 +63,7 @@ bcache_done (void)
   bcache_stop_write_behind = true;
 
   /* Free all list bcache entries */
-  lock_acquire (&bcache_lock);
+//  lock_acquire (&bcache_lock);
   while (!list_empty (&bcache_entry_list))
     {
       struct list_elem *e = list_front (&bcache_entry_list);
@@ -80,7 +80,7 @@ bcache_done (void)
       free (bce->buffer);
       free (bce);
     }
-  lock_release (&bcache_lock);
+//  lock_release (&bcache_lock);
 }
 
 /* Reads a block through the buffer cache system */
@@ -89,7 +89,7 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
 	     off_t size, off_t offset)
 {
   bool cache_hit;
-  lock_acquire (&bcache_lock);
+//  lock_acquire (&bcache_lock);
 
   /* Find the corresponding buffer cache entry, if
    it exists. */
@@ -118,7 +118,7 @@ bcache_read (struct block_device *device, block_sector_t sector, void *buffer,
   /* Partially copy into caller's buffer. */
   memcpy (buffer, bce->buffer + offset, size);
 
-  lock_release (&bcache_lock);
+//  lock_release (&bcache_lock);
   return cache_hit;
 }
 
@@ -128,7 +128,7 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
 	      off_t size, off_t offset)
 {
   bool cache_hit;
-  lock_acquire (&bcache_lock);
+//  lock_acquire (&bcache_lock);
 
   /* Find the corresponding buffer cache entry, if
    it exists. */
@@ -158,7 +158,7 @@ bcache_write (struct block_device *device, block_sector_t sector, const void *bu
   /* Partially copy from caller's buffer. */
   memcpy (bce->buffer + offset, buffer, size);
 
-  lock_release (&bcache_lock);
+//  lock_release (&bcache_lock);
   return cache_hit;
 }
 
@@ -174,7 +174,7 @@ thread_write_behind (void *aux UNUSED)
     {
       timer_sleep (1000); /* 1000 ticks. */
 
-      lock_acquire (&bcache_lock);
+//      lock_acquire (&bcache_lock);
       for (e = list_begin (&bcache_entry_list);
 	  e != list_end (&bcache_entry_list); e = list_next (e))
 	{
@@ -186,7 +186,7 @@ thread_write_behind (void *aux UNUSED)
 	      block_write (bce->device, bce->sector, bce->buffer);
 	    }
 	}
-      lock_release (&bcache_lock);
+//      lock_release (&bcache_lock);
     }
   while (!bcache_stop_write_behind);
 }
