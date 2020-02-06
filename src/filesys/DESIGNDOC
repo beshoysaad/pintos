@@ -163,14 +163,77 @@ It is marked as removed and all further operations on that directory fail.
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+struct bcache_entry
+{
+  struct list_elem elem;        // entry for the buffer cache list
+  struct block_device *device;  // the block device this entry currently holds data for
+  block_sector_t sector;        // the sector on that block device
+  uint8_t *buffer;              // pointer to the buffer where the contents are stored
+  bool dirty;                   // wether the contents differ from what is currently on the disk
+  bool used;                    // the used bit for the CLOCK eviction algorithm
+  struct lock lock;             // general lock for accessing/modifying the metadata of this entry
+  struct lock cntlock;          // lock for accessing/modifying the data contents of this entry
+};
+This struct holds all metadata needed for a single
+entry in the buffer cache.
+
+struct bcache_data
+{
+  struct block_device  *device;  the block device to read the block from
+  block_sector_t       sector;   the sector from that should be read
+};
+This is used as data packet that is being sent to the
+read-ahead thread.
+
+`static struct list bcache_entry_list;'
+List holding all Buffer Cache Entries
+
+`static struct lock usage_flow_lock;
+ static struct condition usage_flow_condition;
+ static unsigned usage_flow_count;'
+When a thread starts iterating over the entries, `usage_flow_count' is increased.
+When it leaves the loop, `usage_flow_count' is decreased again. Other threads can
+wait for a usage flow to exit using `sage_flow_condition'.
+
+`static struct lock modification_flow_lock;
+ static struct condition modification_flow_condition;
+ static unsigned modification_flow_count;'
+When a thread wants to modify the entries list (i.e add or remove entries), it
+will increase `modification_flow_count'. When a thread is waiting to enter a
+modification flow, other threads will no longer enter usage flows. Once all
+usage flows have exited, the list can be modified and waiting threads can be
+notified using `modification_flow_condition'.
+
+`static bool bcache_stop_write_behind;'
+Boolean flag to indicate the periodical write-behind thread that it
+stop.
+
 ---- ALGORITHMS ----
 
 >> C2: Describe how your cache replacement algorithm chooses a cache
 >> block to evict.
 
+Our code implements the CLOCK eviction algorithm. It keeps a pointer
+into the list of entries. To find a entry that can be evicted, the
+entry pointed by the pointer is taken. If it has the used-bit set,
+that will be unset, the pointer will move forward one item and then
+the process is started over again. If the used-bit is not set, this
+entry is chosen for eviction.
+
 >> C3: Describe your implementation of write-behind.
 
+If the contents of a cache entry is modified, it will just be marked as "dirty"
+and not written back to disk immediatly. Then contents will then only be
+written back to disk once that cache entry is evicted. Every 1000 ticks, a
+seperate thread loops over all entries and writes back all dirty once.
+The number 1000 empirically chosen at this point, at corresponds to roughly
+8 seconds to the development machines being used.
+
 >> C4: Describe your implementation of read-ahead.
+
+Read-ahead is used when blocks are read from a file. If N blocks are requested
+from a file, then the N+1th block will be loaded into cache asynchronously after
+the call for the N blocks returns.
 
 ---- SYNCHRONIZATION ----
 
@@ -178,13 +241,29 @@ It is marked as removed and all further operations on that directory fail.
 >> buffer cache block, how are other processes prevented from evicting
 >> that block?
 
+Each cache entry has two locks for the metadata and for the data content.
+To evict a entry, both locks need to be aquired.
+
 >> C6: During the eviction of a block from the cache, how are other
 >> processes prevented from attempting to access the block?
+
+Similarly, to access a cache entry, the metadata lock needs to be acquired
+first, potentially followed by the data lock. Since the evicting process will
+hold these locks during eviction, no other processes are accessing the data at
+the same time.
 
 ---- RATIONALE ----
 
 >> C7: Describe a file workload likely to benefit from buffer caching,
 >> and workloads likely to benefit from read-ahead and write-behind.
+
+Files that are opened multiple times in short time periods clearly benefit from
+it, as the disk operation, which is taking long time compared to other calculations
+by the program, only needs to be performed once.
+Read-ahead is beneficial for example for a file decoder, where the file blocks
+are read continuous and in order, but only in small chunks at a time.
+Similarly the file encoder would benefit from Write-behind, since the data is not
+dumped to disk after every chunk that is written to the file.
 
 			   SURVEY QUESTIONS
 			   ================
