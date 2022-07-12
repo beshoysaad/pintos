@@ -1,4 +1,4 @@
-# Operating Systems - Winter Semester 2019
+# Operating Systems Project - Winter Semester 2019
 The project was to implement a simple operating system (based on the Pintos system from Stanford University). The project had four stages:
 1. Threads and synchronization.
 2. User programs.
